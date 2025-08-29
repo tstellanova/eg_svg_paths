@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "closed_svg_path",
+    "closed_svg_path_proc",
+]
+
