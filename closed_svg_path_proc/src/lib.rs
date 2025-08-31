@@ -7,6 +7,31 @@ use std::path::{Path};
 use svgtypes::{PathParser, PathSegment};
 use closed_svg_path::{BezierSegment, ClosedCubicBezierPath};
 
+fn avg_points(a: [f32; 2], b: [f32; 2]) -> [f32; 2]
+{
+    [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.]
+}
+
+fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
+{
+    // Split the bezier segment into two segments
+    let p0 = seg.0[0];
+    let p1 = seg.0[1];
+    let p2 = seg.0[2];
+    let p3 = seg.0[3];
+    let p0p = avg_points(p0, p1);
+    let p1p = avg_points(p1, p2);
+    let p2p = avg_points(p2, p3);
+    let p0pp = avg_points(p0p, p1p);
+    let p1pp = avg_points(p1p, p2p);
+    let p0ppp = avg_points(p0pp, p1pp);
+
+    // First sub-curve: [p0,p0p,p0pp,p0ppp]
+    // Second sub-curve:[p0ppp, p1pp, p2p, p3]
+
+    return ( BezierSegment([p0,p0p,p0pp,p0ppp]), BezierSegment([p0ppp, p1pp, p2p, p3]) )
+}
+
 #[proc_macro]
 pub fn svg_paths(input: TokenStream) -> TokenStream {
     let rel_path = parse_macro_input!(input as LitStr).value();
@@ -47,6 +72,8 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
                     let mut last_quad_cp = [0.0f32, 0.0];
                     let mut last_command_was_cubic_curve = false;
                     let mut last_command_was_quad_curve = false;
+
+                    let mut poly_points: Vec<[i32; 2]> = Vec::new();
 
                     for seg in path_segments {
                         match seg {
@@ -183,15 +210,30 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
                         }
                     }
 
-                    let mut poly_points: Vec<[i32; 2]> = Vec::new();
+                    for seg in &bezier_segments {
+                        // simple approximation: split each bezier segment into eight segments
+                        let (seg0, seg1) = split_bez_segment(BezierSegment(*seg));
+                        let (seg00, seg01) = split_bez_segment(seg0);
+                        let (seg10, seg11) = split_bez_segment(seg1);
+                        let (seg000, seg001) = split_bez_segment(seg00);
+                        let (seg010, seg011) = split_bez_segment(seg01);
+                        let (seg100, seg101) = split_bez_segment(seg10);
+                        let (seg110, seg111) = split_bez_segment(seg11);
+
+                        poly_points.push([seg000.0[0][0] as i32, seg000.0[0][1] as i32]);
+                        poly_points.push([seg001.0[0][0] as i32, seg001.0[0][1] as i32]);
+                        poly_points.push([seg010.0[0][0] as i32, seg010.0[0][1] as i32]);
+                        poly_points.push([seg011.0[0][0] as i32, seg011.0[0][1] as i32]);
+                        poly_points.push([seg100.0[0][0] as i32, seg100.0[0][1] as i32]);
+                        poly_points.push([seg101.0[0][0] as i32, seg101.0[0][1] as i32]);
+                        poly_points.push([seg110.0[0][0] as i32, seg110.0[0][1] as i32]);
+                        poly_points.push([seg111.0[0][0] as i32, seg111.0[0][1] as i32]);
+
+                    }
+
+                    // force-close the polygon?
                     if let Some(first) = bezier_segments.first() {
                         poly_points.push([first[0][0] as i32, first[0][1] as i32]);
-                    }
-                    for seg in &bezier_segments {
-                        let mid_x = (seg[0][0] + seg[3][0]) / 2.0;
-                        let mid_y = (seg[0][1] + seg[3][1]) / 2.0;
-                        poly_points.push([mid_x as i32, mid_y as i32]);
-                        poly_points.push([seg[3][0] as i32, seg[3][1] as i32]);
                     }
 
                     let segments_array = bezier_segments.clone()
@@ -263,7 +305,8 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
                 bezier_segments: &#seg_ident[..],
                 bounding_box: #expanded_bbox,
                 subdivision_count: 8,
-                // polyline_approx: Polyline::new(&#poly_ident[..]),
+                polyline_approx: Some(Polyline::new(&#poly_ident[..])), 
+                closed_poly: ClosedPolygon::new(&#poly_ident[..]),
             })
         });
     }

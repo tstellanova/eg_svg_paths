@@ -1,25 +1,26 @@
-use num_traits::float::FloatCore;
 
+
+use num_traits::float::FloatCore;
 
 use crate::ClosedCubicBezierPath;
 use embedded_graphics::{
     geometry::Point,
     pixelcolor::PixelColor,
-    primitives::PointsIter,
+    // primitives::PointsIter,
     Pixel,
 };
 
 /// An iterator that produces all points on the outline of a closed cubic Bezier path
-pub struct ClosedCubicBezierPathPoints {
-    path: ClosedCubicBezierPath,
+pub struct ClosedCubicBezierPathPoints<'a> {
+    path: ClosedCubicBezierPath<'a>,
     segment_index: usize,
     t_step: f32,
     current_t: f32,
     finished: bool,
 }
 
-impl ClosedCubicBezierPathPoints {
-    pub fn new(path: ClosedCubicBezierPath) -> Self {
+impl<'a> ClosedCubicBezierPathPoints<'a> {
+    pub fn new(path: ClosedCubicBezierPath<'a>) -> Self {
         let total_segments = path.bezier_segments.len();
         Self {
             path,
@@ -31,7 +32,7 @@ impl ClosedCubicBezierPathPoints {
     }
 }
 
-impl Iterator for ClosedCubicBezierPathPoints {
+impl<'a> Iterator for ClosedCubicBezierPathPoints<'a> {
     type Item = Point;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -60,45 +61,54 @@ impl Iterator for ClosedCubicBezierPathPoints {
     }
 }
 
-impl PointsIter for ClosedCubicBezierPath {
-    type Iter = ClosedCubicBezierPathPoints;
+// impl PointsIter for ClosedCubicBezierPath {
+//     type Iter = ClosedCubicBezierPathPoints;
 
-    fn points(&self) -> Self::Iter {
-        ClosedCubicBezierPathPoints::new(*self)
-    }
-}
+//     fn points(&self) -> Self::Iter {
+//         ClosedCubicBezierPathPoints::new(*self)
+//     }
+// }
 
 /// Iterator for filled pixels using scanline algorithm
-pub struct FilledClosedCubicBezierPathPoints {
-    path: ClosedCubicBezierPath,
+pub struct FilledClosedCubicBezierPathPoints<'a> {
+    path: ClosedCubicBezierPath<'a>,
     current_y: i32,
     current_x: i32,
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
     max_y: i32,
     scanline_complete: bool,
 }
 
-impl FilledClosedCubicBezierPathPoints {
-    pub fn new(path: ClosedCubicBezierPath) -> Self {
+impl<'a> FilledClosedCubicBezierPathPoints<'a> {
+    pub fn new(path: ClosedCubicBezierPath<'a>) -> Self {
         let bounding_box = path.bounding_box;
         Self {
             path,
-            current_y: bounding_box.top_left.y,
-            current_x: bounding_box.top_left.x,
+            current_y: i32::MIN,
+            current_x: i32::MIN,
+            min_x:  bounding_box.top_left.x,
+            max_x: bounding_box.top_left.x + bounding_box.size.width as i32,
+            min_y: bounding_box.top_left.y,
             max_y: bounding_box.top_left.y + bounding_box.size.height as i32,
             scanline_complete: false,
         }
     }
     
     fn advance_to_next_fill_pixel(&mut self) -> Option<Point> {
+        if self.current_x == i32::MIN { self.current_x = self.min_x}
+        if self.current_y == i32::MIN { self.current_y = self.min_y}
+
         while self.current_y < self.max_y {
             if !self.scanline_complete {
                 // Find the next pixel on the current scanline that's inside the path
-                let max_x = self.path.bounding_box.top_left.x + self.path.bounding_box.size.width as i32;
+                // let max_x = self.path.bounding_box.top_left.x + self.path.bounding_box.size.width as i32;
                 
-                while self.current_x < max_x {
+                while self.current_x < self.max_x {
                     let point = Point::new(self.current_x, self.current_y);
                     self.current_x += 1;
-                    
+                    debug_assert!(self.current_x == 0,"unexpected");
                     if self.path.contains_point(point) {
                         return Some(point);
                     }
@@ -109,7 +119,7 @@ impl FilledClosedCubicBezierPathPoints {
             } else {
                 // Move to next scanline
                 self.current_y += 1;
-                self.current_x = self.path.bounding_box.top_left.x;
+                self.current_x = self.min_x;
                 self.scanline_complete = false;
             }
         }
@@ -118,7 +128,7 @@ impl FilledClosedCubicBezierPathPoints {
     }
 }
 
-impl Iterator for FilledClosedCubicBezierPathPoints {
+impl<'a> Iterator for FilledClosedCubicBezierPathPoints<'a> {
     type Item = Point;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -127,36 +137,43 @@ impl Iterator for FilledClosedCubicBezierPathPoints {
 }
 
 /// Iterator for stroke pixels with specified thickness
-pub struct StrokedClosedCubicBezierPathPoints {
-    path: ClosedCubicBezierPath,
+pub struct StrokedClosedCubicBezierPathPoints<'a> {
+    path: ClosedCubicBezierPath<'a>,
     stroke_width: f32,
     current_y: i32,
     current_x: i32,
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
     max_y: i32,
     scanline_complete: bool,
 }
 
-impl StrokedClosedCubicBezierPathPoints {
-    pub fn new(path: ClosedCubicBezierPath, stroke_width: u32) -> Self {
+impl<'a> StrokedClosedCubicBezierPathPoints<'a> {
+    pub fn new(path: ClosedCubicBezierPath<'a>, stroke_width: u32) -> Self {
         let bounding_box = path.bounding_box;
         let stroke_width_f = stroke_width as f32;
         
         Self {
             path,
             stroke_width: stroke_width_f,
-            current_y: bounding_box.top_left.y - stroke_width as i32,
-            current_x: bounding_box.top_left.x - stroke_width as i32,
+            current_x: i32::MIN,
+            current_y: i32::MIN,
+            min_x: bounding_box.top_left.x - stroke_width as i32,
+            max_x: bounding_box.top_left.x + bounding_box.size.width as i32 + stroke_width as i32,
+            min_y: bounding_box.top_left.y - stroke_width as i32,
             max_y: bounding_box.top_left.y + bounding_box.size.height as i32 + stroke_width as i32,
             scanline_complete: false,
         }
     }
     
     fn advance_to_next_stroke_pixel(&mut self) -> Option<Point> {
+        if self.current_x == i32::MIN { self.current_x = self.min_x}
+        if self.current_y == i32::MIN { self.current_y = self.min_y}
+
         while self.current_y < self.max_y {
-            if !self.scanline_complete {
-                let max_x = self.path.bounding_box.top_left.x + self.path.bounding_box.size.width as i32 + self.stroke_width as i32;
-                
-                while self.current_x < max_x {
+            if !self.scanline_complete {                
+                while self.current_x < self.max_x {
                     let point = Point::new(self.current_x, self.current_y);
                     self.current_x += 1;
                     
@@ -169,7 +186,7 @@ impl StrokedClosedCubicBezierPathPoints {
                 self.scanline_complete = true;
             } else {
                 self.current_y += 1;
-                self.current_x = self.path.bounding_box.top_left.x - self.stroke_width as i32;
+                self.current_x = self.min_x;
                 self.scanline_complete = false;
             }
         }
@@ -178,7 +195,7 @@ impl StrokedClosedCubicBezierPathPoints {
     }
 }
 
-impl Iterator for StrokedClosedCubicBezierPathPoints {
+impl Iterator for StrokedClosedCubicBezierPathPoints<'_> {
     type Item = Point;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -187,26 +204,26 @@ impl Iterator for StrokedClosedCubicBezierPathPoints {
 }
 
 /// Combined iterator for both fill and stroke
-pub struct StyledClosedCubicBezierPathPoints<F, S>
+pub struct StyledClosedCubicBezierPathPoints<'a, F, S>
 where
     F: PixelColor,
     S: PixelColor,
 {
-    fill_iter: Option<FilledClosedCubicBezierPathPoints>,
-    stroke_iter: Option<StrokedClosedCubicBezierPathPoints>,
+    fill_iter: Option<FilledClosedCubicBezierPathPoints<'a>>,
+    stroke_iter: Option<StrokedClosedCubicBezierPathPoints<'a>>,
     fill_color: Option<F>,
     stroke_color: Option<S>,
     fill_exhausted: bool,
     stroke_exhausted: bool,
 }
 
-impl<F, S> StyledClosedCubicBezierPathPoints<F, S>
+impl<'a, F, S> StyledClosedCubicBezierPathPoints<'a, F, S>
 where
     F: PixelColor,
     S: PixelColor,
 {
     pub fn new(
-        path: ClosedCubicBezierPath,
+        path: ClosedCubicBezierPath<'a>,
         fill_color: Option<F>,
         stroke_color: Option<S>,
         stroke_width: u32,
@@ -222,7 +239,7 @@ where
     }
 }
 
-impl<F, S> Iterator for StyledClosedCubicBezierPathPoints<F, S>
+impl<'a, F, S> Iterator for StyledClosedCubicBezierPathPoints<'a, F, S>
 where
     F: PixelColor,
     S: PixelColor,
@@ -231,32 +248,32 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         // First, try to get a fill pixel
-        if !self.fill_exhausted {
-            if let Some(ref mut fill_iter) = self.fill_iter {
-                if let Some(point) = fill_iter.next() {
-                    if let Some(color) = self.fill_color {
+        if let Some(color) = self.fill_color {
+            if !self.fill_exhausted {
+                if let Some(ref mut fill_iter) = self.fill_iter {
+                    if let Some(point) = fill_iter.next() {
                         return Some(Pixel(point, color));
+                    } else {
+                        self.fill_exhausted = true;
                     }
-                } else {
-                    self.fill_exhausted = true;
                 }
             }
         }
 
         // Then try stroke pixels
-        if !self.stroke_exhausted {
-            if let Some(ref mut stroke_iter) = self.stroke_iter {
-                if let Some(point) = stroke_iter.next() {
-                    if let Some(stroke_color) = self.stroke_color {
+        if let Some(_stroke_color) = self.stroke_color {
+            if !self.stroke_exhausted {
+                if let Some(ref mut stroke_iter) = self.stroke_iter {
+                    if let Some(point) = stroke_iter.next() {
                         // Cast stroke color to fill color type (this is a limitation of the embedded-graphics API)
                         // In practice, F and S would typically be the same type
                         if let Some(fill_color) = self.fill_color {
                             // Use fill color as proxy - in real usage F and S should be same type
                             return Some(Pixel(point, fill_color));
                         }
+                    } else {
+                        self.stroke_exhausted = true;
                     }
-                } else {
-                    self.stroke_exhausted = true;
                 }
             }
         }

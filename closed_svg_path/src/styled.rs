@@ -1,33 +1,33 @@
 use crate::{ClosedCubicBezierPath, FilledClosedCubicBezierPathPoints, StrokedClosedCubicBezierPathPoints};
 use embedded_graphics::{
     draw_target::DrawTarget,
-    geometry::{Dimensions, OriginDimensions, Point},
+    geometry::{OriginDimensions, Point},
     pixelcolor::PixelColor,
-    primitives::{OffsetOutline, PointsIter, PrimitiveStyle, Rectangle},
+    primitives::{OffsetOutline, PrimitiveStyle, Rectangle},
     transform::Transform,
     Drawable, Pixel,
 };
 
 // Create a wrapper type to avoid orphan rule issues
 #[derive(Copy, Clone, Debug)]
-pub struct StyledClosedCubicBezierPath<C: PixelColor> {
-    pub path: ClosedCubicBezierPath,
+pub struct StyledClosedCubicBezierPath<'a, C: PixelColor> {
+    pub path: ClosedCubicBezierPath<'a>,
     pub style: PrimitiveStyle<C>,
 }
 
-impl<C: PixelColor> StyledClosedCubicBezierPath<C> {
-    pub fn new(path: ClosedCubicBezierPath, style: PrimitiveStyle<C>) -> Self {
+impl<'a, C: PixelColor> StyledClosedCubicBezierPath<'a, C> {
+    pub fn new(path: ClosedCubicBezierPath<'a>, style: PrimitiveStyle<C>) -> Self {
         Self { path, style }
     }
 }
 
-impl<C: PixelColor> OriginDimensions for StyledClosedCubicBezierPath<C> {
+impl<'a, C: PixelColor> OriginDimensions for StyledClosedCubicBezierPath<'a, C> {
     fn size(&self) -> embedded_graphics::geometry::Size {
         self.path.size()
     }
 }
 
-impl<C: PixelColor> Transform for StyledClosedCubicBezierPath<C> {
+impl<'a, C: PixelColor> Transform for StyledClosedCubicBezierPath<'a, C> {
     fn translate(&self, by: Point) -> Self {
         Self {
             path: self.path.translate(by),
@@ -41,15 +41,7 @@ impl<C: PixelColor> Transform for StyledClosedCubicBezierPath<C> {
     }
 }
 
-// impl PointsIter for ClosedCubicBezierPath {
-//     type Iter = crate::ClosedCubicBezierPathPoints;
-
-//     fn points(&self) -> Self::Iter {
-//         crate::ClosedCubicBezierPathPoints::new(*self)
-//     }
-// }
-
-impl OffsetOutline for ClosedCubicBezierPath {
+impl OffsetOutline for ClosedCubicBezierPath<'_> {
     fn offset(&self, offset: i32) -> Self {
         // Create a new path with expanded bounding box
         let expanded_box = Rectangle::new(
@@ -63,16 +55,21 @@ impl OffsetOutline for ClosedCubicBezierPath {
         Self {
             bezier_segments: self.bezier_segments,
             bounding_box: expanded_box,
+            polyline_approx: None, // TODO
+            closed_poly: None, // TODO
+
             subdivision_count: self.subdivision_count,
         }
     }
 }
 
-impl Transform for ClosedCubicBezierPath {
+impl<'a> Transform for ClosedCubicBezierPath<'a> {
     fn translate(&self, by: Point) -> Self {
         Self {
             bezier_segments: self.bezier_segments, // Note: segments are not translated, only bounding box
             bounding_box: self.bounding_box.translate(by),
+            polyline_approx:   None, // TODO
+            closed_poly: None, // TODO
             subdivision_count: self.subdivision_count,
         }
     }
@@ -84,12 +81,12 @@ impl Transform for ClosedCubicBezierPath {
 }
 
 /// Iterator that yields pixels for a styled closed cubic Bezier path
-pub struct StyledPixels<C>
+pub struct StyledPixels<'a, C>
 where
     C: PixelColor,
 {
-    fill_iter: Option<FilledClosedCubicBezierPathPoints>,
-    stroke_iter: Option<StrokedClosedCubicBezierPathPoints>,
+    fill_iter: Option<FilledClosedCubicBezierPathPoints<'a>>,
+    stroke_iter: Option<StrokedClosedCubicBezierPathPoints<'a>>,
     fill_color: Option<C>,
     stroke_color: Option<C>,
     current_mode: DrawingMode,
@@ -102,12 +99,12 @@ enum DrawingMode {
     Done,
 }
 
-impl<C> StyledPixels<C>
+impl<'a, C> StyledPixels<'a, C>
 where
     C: PixelColor,
 {
     fn new(
-        path: ClosedCubicBezierPath,
+        path: ClosedCubicBezierPath<'a>,
         style: &PrimitiveStyle<C>,
     ) -> Self {
         let fill_iter = style.fill_color.map(|_| FilledClosedCubicBezierPathPoints::new(path));
@@ -137,7 +134,7 @@ where
     }
 }
 
-impl<C> Iterator for StyledPixels<C>
+impl<'a, C> Iterator for StyledPixels<'a, C>
 where
     C: PixelColor,
 {
@@ -180,7 +177,7 @@ where
     }
 }
 
-impl<C> Drawable for StyledClosedCubicBezierPath<C>
+impl<'a, C> Drawable for StyledClosedCubicBezierPath<'a, C>
 where
     C: PixelColor,
 {
@@ -197,12 +194,12 @@ where
 }
 
 // Implement IntoIterator for styled path to make it easier to use
-impl<C> IntoIterator for StyledClosedCubicBezierPath<C>
+impl<'a, C> IntoIterator for StyledClosedCubicBezierPath<'a, C>
 where
     C: PixelColor,
 {
     type Item = Pixel<C>;
-    type IntoIter = StyledPixels<C>;
+    type IntoIter = StyledPixels<'a, C>;
 
     fn into_iter(self) -> Self::IntoIter {
         StyledPixels::new(self.path, &self.style)
@@ -210,9 +207,9 @@ where
 }
 
 // Helper functions for creating styled paths
-impl ClosedCubicBezierPath {
+impl<'a> ClosedCubicBezierPath<'a> {
     /// Create a styled path with the given primitive style
-    pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedCubicBezierPath<C>
+    pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedCubicBezierPath<'a, C>
     where
         C: PixelColor,
     {

@@ -3,15 +3,17 @@
 use num_traits::Float;
 
 use embedded_graphics::{
-    geometry::{Dimensions, OriginDimensions, Point, Size},
-    primitives::Rectangle,
+    geometry::{OriginDimensions, Point, Size},
+    primitives::{Polyline, Rectangle},
 };
 
 pub mod points;
 pub mod styled;
+pub mod closed_poly;
 
 pub use points::*;
 pub use styled::*;
+pub use closed_poly::*;
 
 #[derive(Copy, Clone, Debug)]
 pub struct BezierSegment(pub [[f32; 2]; 4]);
@@ -47,19 +49,23 @@ impl BezierSegment {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ClosedCubicBezierPath {
+pub struct ClosedCubicBezierPath<'a> {
     pub bezier_segments: &'static [BezierSegment],
     pub bounding_box: Rectangle,
+    pub polyline_approx: Option<Polyline<'a>>,
+    pub closed_poly: Option<ClosedPolygon<'a>>,
     /// Number of subdivisions per segment for approximation
     pub subdivision_count: u16,
 }
 
-impl ClosedCubicBezierPath {
+impl<'a> ClosedCubicBezierPath<'a> {
     pub fn new(bezier_segments: &'static [BezierSegment], subdivision_count: u16) -> Self {
         let bounding_box = Self::calculate_bounding_box(bezier_segments);
         Self {
             bezier_segments,
             bounding_box,
+            polyline_approx: None,
+            closed_poly: None,
             subdivision_count,
         }
     }
@@ -168,7 +174,7 @@ impl ClosedCubicBezierPath {
 }
 
 // Implement required traits for embedded-graphics integration
-impl OriginDimensions for ClosedCubicBezierPath {
+impl OriginDimensions for ClosedCubicBezierPath<'_> {
     fn size(&self) -> Size {
         self.bounding_box.size
     }
