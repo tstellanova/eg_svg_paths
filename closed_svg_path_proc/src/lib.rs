@@ -198,11 +198,12 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
                                 last_command_was_cubic_curve = false;
                             }
                             PathSegment::EllipticalArc { .. } => {
-                                panic!("Elliptical arcs not supported");
+                                println!("Elliptical arc '{}' not supported",id.to_string());
+                                continue;
                             }
                             PathSegment::ClosePath { .. } => {
                                 if current_pos != start_pos {
-                                    panic!("Path not closed properly");
+                                    panic!("Path '{}' not closed properly", id.to_string());
                                 }
                                 last_command_was_cubic_curve = false;
                                 last_command_was_quad_curve = false;
@@ -256,7 +257,7 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
         let seg_ident = format_ident!("SVG_PATH_{}_BEZIER_SEGMENTS", index);
         let poly_ident = format_ident!("SVG_PATH_{}_POLY_POINTS", index);
 
-        println!("bbox: {:?}", bbox);
+        println!("path id: '{}' size: {:?}", id, bbox.size);
         let seg_len = segs.len();
         let seg_inits: Vec<_> = segs.iter().map(|[p0, p1, p2, p3]| {
             let p0x = p0[0];
