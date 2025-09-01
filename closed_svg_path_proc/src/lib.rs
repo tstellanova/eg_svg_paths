@@ -1,7 +1,9 @@
-use proc_macro::TokenStream;
+use proc_macro::{TokenStream};
+use proc_macro2::Span;
+
 use quote::{quote, format_ident};
+use syn::spanned::Spanned;
 use syn::{parse_macro_input, LitStr};
-use std::env;
 use std::fs;
 use std::path::{Path};
 use svgtypes::{PathParser, PathSegment};
@@ -34,19 +36,38 @@ fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
 
 #[proc_macro]
 pub fn svg_paths(input: TokenStream) -> TokenStream {
+    // get the parameter containing the (relative) path to the input file
     let rel_path = parse_macro_input!(input as LitStr).value();
-    // Use CARGO_MANIFEST_DIR to resolve paths relative to the caller's crate root
-    let cargo_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| {
-        panic!("CARGO_MANIFEST_DIR not set. Ensure the macro is called from a crate with a valid Cargo.toml.");
-    });
-    let full_path = Path::new(&cargo_dir).join(&rel_path);
+    println!("rel_path: {}",rel_path);
+
+    // Convert syn::LitStr span → proc_macro2::Span → proc_macro::Span
+    let span: Span = rel_path.span(); 
+
+    // Grab the source file of the caller
+    // We assume .local_file() is Some(...)
+    let source_path = span.file();
+    println!("source_path: {}",source_path);
+
+    let local_path = span.local_file().unwrap();
+    println!("local_path {:?}", local_path);
+    
+    // local_file() is usually what you want
+    let base_path = local_path.parent().unwrap();
+
+    let full_path = Path::new(&base_path).join(&rel_path);
     let full_path = match full_path.canonicalize() {
         Ok(path) => path,
         Err(e) => panic!(
-            "Failed to resolve SVG file path '{}' relative to CARGO_MANIFEST_DIR '{}': {}. Ensure the path is correct relative to your crate's root directory (where Cargo.toml is located). For example, if your SVG file is in 'img/simple-heart.svg' relative to Cargo.toml, use 'img/simple-heart.svg'.",
-            rel_path, cargo_dir, e
+            "Failed to resolve SVG file path '{}' {} {} {} {} {}",
+            rel_path, 
+            source_path,
+            local_path.display(),
+            base_path.display(),
+            full_path.display(),
+            e
         ),
     };
+
     let svg_content = match fs::read_to_string(&full_path) {
         Ok(content) => content,
         Err(e) => panic!(
@@ -198,11 +219,13 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
                                 last_command_was_cubic_curve = false;
                             }
                             PathSegment::EllipticalArc { .. } => {
-                                println!("Elliptical arc '{}' not supported",id.to_string());
+                                // TODO Diagnostic is unstable
+                                // Diagnostic::new(Level::Note, format!("Elliptical arc '{}' not supported",id.to_string())).emit();
                                 continue;
                             }
                             PathSegment::ClosePath { .. } => {
                                 if current_pos != start_pos {
+                                    // TODO close paths automatically?
                                     panic!("Path '{}' not closed properly", id.to_string());
                                 }
                                 last_command_was_cubic_curve = false;
