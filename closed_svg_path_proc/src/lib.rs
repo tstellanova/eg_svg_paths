@@ -32,9 +32,11 @@ fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
     return ( BezierSegment([p0,p0p,p0pp,p0ppp]), BezierSegment([p0ppp, p1pp, p2p, p3]) )
 }
 
+
 #[proc_macro]
-pub fn svg_paths(input: TokenStream) -> TokenStream {
+pub fn import_svg_paths(input: TokenStream) -> TokenStream {
     let rel_path = parse_macro_input!(input as LitStr).value();
+
     // Use CARGO_MANIFEST_DIR to resolve paths relative to the caller's crate root
     let cargo_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| {
         panic!("CARGO_MANIFEST_DIR not set. Ensure the macro is called from a crate with a valid Cargo.toml.");
@@ -315,12 +317,15 @@ pub fn svg_paths(input: TokenStream) -> TokenStream {
     let output = quote! {
         #(#static_decls)*
 
-        pub fn get_path_by_id(key: &'static str) -> Option<ClosedCubicBezierPath> {
+        pub fn get_svg_path_by_id(key: &str) -> Option<ClosedCubicBezierPath> {
             match key {
                 #(#match_arms,)*
                 _ => None,
             }
         }
+
+
+        
     };
 
     output.into()
