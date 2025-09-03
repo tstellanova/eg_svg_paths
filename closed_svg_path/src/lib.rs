@@ -4,7 +4,7 @@ use num_traits::Float;
 
 use embedded_graphics::{
     geometry::{OriginDimensions, Point, Size},
-    primitives::{Polyline, Rectangle},
+    primitives::{Rectangle},
 };
 
 pub mod points;
@@ -52,7 +52,6 @@ impl BezierSegment {
 pub struct ClosedCubicBezierPath<'a> {
     pub bezier_segments: &'static [BezierSegment],
     pub bounding_box: Rectangle,
-    pub polyline_approx: Option<Polyline<'a>>,
     pub closed_poly: Option<ClosedPolygon<'a>>,
     /// Number of subdivisions per segment for approximation
     pub subdivision_count: u16,
@@ -64,7 +63,6 @@ impl<'a> ClosedCubicBezierPath<'a> {
         Self {
             bezier_segments,
             bounding_box,
-            polyline_approx: None,
             closed_poly: None,
             subdivision_count,
         }

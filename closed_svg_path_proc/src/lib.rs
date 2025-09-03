@@ -362,7 +362,6 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                 bezier_segments: &#seg_ident[..],
                 bounding_box: #bbox,
                 subdivision_count: 8,
-                polyline_approx: Some(Polyline::new(&#poly_ident[..])), 
                 closed_poly: ClosedPolygon::new(&#poly_ident[..]),
             })
         }

@@ -55,7 +55,6 @@ impl OffsetOutline for ClosedCubicBezierPath<'_> {
         Self {
             bezier_segments: self.bezier_segments,
             bounding_box: expanded_box,
-            polyline_approx: None, // TODO
             closed_poly: None, // TODO
 
             subdivision_count: self.subdivision_count,
@@ -68,7 +67,6 @@ impl<'a> Transform for ClosedCubicBezierPath<'a> {
         Self {
             bezier_segments: self.bezier_segments, // Note: segments are not translated, only bounding box
             bounding_box: self.bounding_box.translate(by),
-            polyline_approx:   None, // TODO
             closed_poly: None, // TODO
             subdivision_count: self.subdivision_count,
         }
