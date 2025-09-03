@@ -1,11 +1,56 @@
 use proc_macro::TokenStream;
 use quote::{quote, format_ident};
-use syn::{parse_macro_input, LitStr};
+use syn::{parse_macro_input, LitStr, Token};
 use std::env;
 use std::fs;
-use std::path::{Path};
+use std::path::Path;
 use svgtypes::{PathParser, PathSegment};
 use closed_svg_path::{BezierSegment, ClosedCubicBezierPath};
+
+// Custom parser for the macro input that accepts any token sequence for file_id
+struct MacroInput {
+    file_id_tokens: proc_macro2::TokenStream,
+    file_path: String,
+}
+
+impl syn::parse::Parse for MacroInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Parse tokens until we hit a comma
+        let mut file_id_tokens = proc_macro2::TokenStream::new();
+        while !input.peek(Token![,]) && !input.is_empty() {
+            let token: proc_macro2::TokenTree = input.parse()?;
+            file_id_tokens.extend(std::iter::once(token));
+        }
+        
+        let _: Token![,] = input.parse()?;
+        let file_path: LitStr = input.parse()?;
+        
+        Ok(MacroInput {
+            file_id_tokens,
+            file_path: file_path.value(),
+        })
+    }
+}
+
+// Helper function to create a safe identifier from token stream
+fn tokens_to_ident_suffix(tokens: &proc_macro2::TokenStream) -> String {
+    let token_str = tokens.to_string();
+    token_str
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '_' { 
+                Some(c) 
+            } else if c.is_whitespace() { 
+                Some('_') 
+            } else { 
+                None 
+            }
+        })
+        .collect::<String>()
+        .replace("__", "_")
+        .trim_matches('_')
+        .to_string()
+}
 
 fn avg_points(a: [f32; 2], b: [f32; 2]) -> [f32; 2]
 {
@@ -32,10 +77,11 @@ fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
     return ( BezierSegment([p0,p0p,p0pp,p0ppp]), BezierSegment([p0ppp, p1pp, p2p, p3]) )
 }
 
-
 #[proc_macro]
 pub fn import_svg_paths(input: TokenStream) -> TokenStream {
-    let rel_path = parse_macro_input!(input as LitStr).value();
+    let macro_input = parse_macro_input!(input as MacroInput);
+    let file_id_suffix = tokens_to_ident_suffix(&macro_input.file_id_tokens);
+    let rel_path = macro_input.file_path;
 
     // Use CARGO_MANIFEST_DIR to resolve paths relative to the caller's crate root
     let cargo_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| {
@@ -251,13 +297,13 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
         }
     }
 
-
     let mut static_decls = Vec::new();
-    let mut match_arms = Vec::new();
+    let mut match_data = Vec::new();
 
     for (index, (id, segs, bbox, polys)) in paths.into_iter().enumerate() {
-        let seg_ident = format_ident!("SVG_PATH_{}_BEZIER_SEGMENTS", index);
-        let poly_ident = format_ident!("SVG_PATH_{}_POLY_POINTS", index);
+        // Include file_id in the static identifier names to avoid collisions
+        let seg_ident = format_ident!("SVG_FILE_{}_PATH_{}_BEZIER_SEGMENTS", file_id_suffix, index);
+        let poly_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLY_POINTS", file_id_suffix, index);
 
         println!("path id: '{}' size: {:?}", id, bbox.size);
         let seg_len = segs.len();
@@ -303,29 +349,34 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
             )
         };
 
-        match_arms.push(quote! {
+        match_data.push((id.clone(), seg_ident.clone(), poly_ident.clone(), expanded_bbox.clone()));
+    }
+
+    // Generate a function name specific to this file_id
+    let get_svg_path_fn = format_ident!("get_svg_path_by_id_file_{}", file_id_suffix);
+
+    // Generate match arms for the function
+    let match_arms: Vec<_> = match_data.iter().map(|(id, seg_ident, poly_ident, bbox)| {
+        quote! {
             #id => Some(ClosedCubicBezierPath {
                 bezier_segments: &#seg_ident[..],
-                bounding_box: #expanded_bbox,
+                bounding_box: #bbox,
                 subdivision_count: 8,
                 polyline_approx: Some(Polyline::new(&#poly_ident[..])), 
                 closed_poly: ClosedPolygon::new(&#poly_ident[..]),
             })
-        });
-    }
+        }
+    }).collect();
 
     let output = quote! {
         #(#static_decls)*
 
-        pub fn get_svg_path_by_id(key: &str) -> Option<ClosedCubicBezierPath> {
-            match key {
+        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedCubicBezierPath> {
+            match path_id {
                 #(#match_arms,)*
                 _ => None,
             }
         }
-
-
-        
     };
 
     output.into()
