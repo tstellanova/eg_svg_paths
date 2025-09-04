@@ -104,11 +104,11 @@ impl<'a> ClosedPolygon<'a> {
         let polyline = Polyline::new(points);
         let bounding_box = polyline.bounding_box();
 
-        const MAX_SCANLINES: i32 = 240;
-        let mut all_intersections: [IntersectionBuffer; MAX_SCANLINES as usize] = [IntersectionBuffer::new() ; MAX_SCANLINES as usize];
-        for y in 0..MAX_SCANLINES {
-            Self::find_scanline_intersections(points, y, &mut all_intersections[y as usize]);
-        }
+        // const MAX_SCANLINES: i32 = 240;
+        // let mut all_intersections: [IntersectionBuffer; MAX_SCANLINES as usize] = [IntersectionBuffer::new() ; MAX_SCANLINES as usize];
+        // for y in 0..MAX_SCANLINES {
+        //     Self::find_scanline_intersections(points, y, &mut all_intersections[y as usize]);
+        // }
         ClosedPolygon {
             points,
             polyline,
