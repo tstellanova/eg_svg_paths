@@ -333,7 +333,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
     // Generate match arms for the function
     let match_arms: Vec<_> = match_data.iter().map(|(id, poly_ident)| {
         quote! {
-            #id => ClosedPolygon::new(&#poly_ident[..])
+            #id => Some(ClosedPolygon::new_static(&#poly_ident[..]))
         }
     }).collect();
 

@@ -99,6 +99,18 @@ impl<'a> ClosedPolygon<'a> {
         })
     }
 
+    pub fn new_static(points: &'static [Point]) -> Self {
+        // Create polyline with original points
+        let polyline = Polyline::new(points);
+        let bounding_box = polyline.bounding_box();
+
+        ClosedPolygon {
+            points,
+            polyline,
+            bounding_box,
+        }
+    }
+
     /// Get the vertices of the polygon
     pub fn vertices(&self) -> &[Point] {
         self.points
