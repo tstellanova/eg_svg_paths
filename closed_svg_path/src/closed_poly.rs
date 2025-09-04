@@ -104,6 +104,11 @@ impl<'a> ClosedPolygon<'a> {
         let polyline = Polyline::new(points);
         let bounding_box = polyline.bounding_box();
 
+        const MAX_SCANLINES: i32 = 240;
+        let mut all_intersections: [IntersectionBuffer; MAX_SCANLINES as usize] = [IntersectionBuffer::new() ; MAX_SCANLINES as usize];
+        for y in 0..MAX_SCANLINES {
+            Self::find_scanline_intersections(points, y, &mut all_intersections[y as usize]);
+        }
         ClosedPolygon {
             points,
             polyline,
@@ -116,6 +121,34 @@ impl<'a> ClosedPolygon<'a> {
         self.points
     }
 
+    /// Find intersections of a horizontal scanline at y with our polygon edges
+    fn find_scanline_intersections(vertices: &[Point], y: i32, scanline_intersections: &mut IntersectionBuffer) {
+        scanline_intersections.clear();
+        let n = vertices.len();
+
+        for i in 0..n {
+            let p1 = vertices[i];
+            let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
+
+            // Skip horizontal edges
+            if p1.y == p2.y {
+                continue;
+            }
+
+            // Check if scanline intersects this edge
+            let min_y = p1.y.min(p2.y);
+            let max_y = p1.y.max(p2.y);
+
+            if y >= min_y && y < max_y {
+                // Calculate intersection x coordinate
+                let x = p1.x + ((y - p1.y) * (p2.x - p1.x)) / (p2.y - p1.y);
+                let _ = scanline_intersections.push(x);
+            }
+        }
+
+        scanline_intersections.sort();
+    }
+    
     /// Create a styled version of this polygon
     pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedPolygon<'a, C>
     where
@@ -161,7 +194,7 @@ where
 }
 
 /// Fixed-size intersection buffer for scanline algorithm
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 struct IntersectionBuffer {
     intersections: [i32; MAX_INTERSECTIONS],
     count: usize,
