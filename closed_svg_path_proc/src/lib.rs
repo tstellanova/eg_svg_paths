@@ -306,8 +306,8 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
         let poly_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLY_POINTS", file_id_suffix, index);
 
         println!("path id: '{}' size: {:?}", id, bbox.size);
-        let seg_len = segs.len();
-        let seg_inits: Vec<_> = segs.iter().map(|[p0, p1, p2, p3]| {
+        let _seg_len = segs.len();
+        let _seg_inits: Vec<_> = segs.iter().map(|[p0, p1, p2, p3]| {
             let p0x = p0[0];
             let p0y = p0[1];
             let p1x = p1[0];
@@ -321,9 +321,9 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
             }
         }).collect();
 
-        static_decls.push(quote! {
-            static #seg_ident: [BezierSegment; #seg_len] = [#(#seg_inits),*];
-        });
+        // static_decls.push(quote! {
+        //     static #seg_ident: [BezierSegment; #seg_len] = [#(#seg_inits),*];
+        // });
 
         let poly_len = polys.len();
         let poly_inits: Vec<_> = polys.iter().map(|[x, y]| {
@@ -350,27 +350,24 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
         };
 
         match_data.push((id.clone(), seg_ident.clone(), poly_ident.clone(), expanded_bbox.clone()));
+        // match_data.push((id.clone(), poly_ident.clone()));
     }
 
     // Generate a function name specific to this file_id
     let get_svg_path_fn = format_ident!("get_svg_path_by_id_file_{}", file_id_suffix);
 
     // Generate match arms for the function
-    let match_arms: Vec<_> = match_data.iter().map(|(id, seg_ident, poly_ident, bbox)| {
+    let match_arms: Vec<_> = match_data.iter().map(|(id, _seg_ident, poly_ident, _bbox)| {
+    // let match_arms: Vec<_> = match_data.iter().map(|(id, poly_ident)| {
         quote! {
-            #id => Some(ClosedCubicBezierPath {
-                bezier_segments: &#seg_ident[..],
-                bounding_box: #bbox,
-                subdivision_count: 8,
-                closed_poly: ClosedPolygon::new(&#poly_ident[..]),
-            })
+            #id => ClosedPolygon::new(&#poly_ident[..])
         }
     }).collect();
 
     let output = quote! {
         #(#static_decls)*
 
-        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedCubicBezierPath> {
+        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedPolygon> {
             match path_id {
                 #(#match_arms,)*
                 _ => None,

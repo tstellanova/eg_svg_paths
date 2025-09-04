@@ -86,9 +86,10 @@ impl<'a> ClosedPolygon<'a> {
             return None;
         }
 
+        info!("new ClosedPolygon");
         // Create polyline with original points
         let polyline = Polyline::new(points);
-        let bounding_box = Self::calculate_bounding_box(points);
+        let bounding_box = polyline.bounding_box();
 
         Some(ClosedPolygon {
             points,
@@ -98,28 +99,28 @@ impl<'a> ClosedPolygon<'a> {
     }
 
     /// Calculate the bounding box for the given points
-    fn calculate_bounding_box(points: &[Point]) -> Rectangle {
-        if points.is_empty() {
-            return Rectangle::zero();
-        }
+    // fn calculate_bounding_box(points: &[Point]) -> Rectangle {
+    //     if points.is_empty() {
+    //         return Rectangle::zero();
+    //     }
 
-        let mut min_x = points[0].x;
-        let mut max_x = points[0].x;
-        let mut min_y = points[0].y;
-        let mut max_y = points[0].y;
+    //     let mut min_x = points[0].x;
+    //     let mut max_x = points[0].x;
+    //     let mut min_y = points[0].y;
+    //     let mut max_y = points[0].y;
 
-        for &point in points.iter().skip(1) {
-            min_x = min_x.min(point.x);
-            max_x = max_x.max(point.x);
-            min_y = min_y.min(point.y);
-            max_y = max_y.max(point.y);
-        }
+    //     for &point in points.iter().skip(1) {
+    //         min_x = min_x.min(point.x);
+    //         max_x = max_x.max(point.x);
+    //         min_y = min_y.min(point.y);
+    //         max_y = max_y.max(point.y);
+    //     }
 
-        Rectangle::new(
-            Point::new(min_x, min_y),
-            Size::new((max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32),
-        )
-    }
+    //     Rectangle::new(
+    //         Point::new(min_x, min_y),
+    //         Size::new((max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32),
+    //     )
+    // }
 
     /// Get the vertices of the polygon
     pub fn vertices(&self) -> &[Point] {
