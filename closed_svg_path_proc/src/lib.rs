@@ -1,4 +1,3 @@
-use closed_svg_path::ClosedPolygon;
 use proc_macro::TokenStream;
 use quote::{quote, format_ident};
 use syn::{parse_macro_input, LitStr, Token};
@@ -59,7 +58,6 @@ const fn avg_points(a: [f32; 2], b: [f32; 2]) -> [f32; 2]
     [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.]
 }
 
-
 /// Split a Bezier segment in two
 const fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
 {
@@ -85,6 +83,30 @@ const fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
 fn round_segment_start(seg: BezierSegment) -> [i32; 2]
 {
     [seg.0[0][0].round() as i32, seg.0[0][1].round() as i32]
+}
+
+// Helper function to calculate bounding box at compile time
+fn calculate_bounding_box(points: &[[i32; 2]]) -> (i32, i32, u32, u32) {
+    if points.is_empty() {
+        return (0, 0, 0, 0);
+    }
+    
+    let mut min_x = points[0][0];
+    let mut max_x = points[0][0];
+    let mut min_y = points[0][1];
+    let mut max_y = points[0][1];
+    
+    for &[x, y] in points.iter().skip(1) {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    
+    let width = (max_x - min_x) as u32;
+    let height = (max_y - min_y) as u32;
+    
+    (min_x, min_y, width, height)
 }
 
 #[proc_macro]
@@ -256,7 +278,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 last_command_was_cubic_curve = false;
                             }
                             PathSegment::EllipticalArc { .. } => {
-                                println!("Elliptical arc '{}' not supported",id.to_string());
+                                eprintln!("Elliptical arc '{}' not supported",id.to_string());
                                 continue;
                             }
                             PathSegment::ClosePath { .. } => {
@@ -287,7 +309,6 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                         poly_points.push(round_segment_start(seg101)); 
                         poly_points.push(round_segment_start(seg110)); 
                         poly_points.push(round_segment_start(seg111)); 
-
                     }
 
                     // force-close the polygon
@@ -295,7 +316,6 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                         poly_points.push(*first_poly_pt);
                     }
 
-                    // TODO calculate scanline intersections?
                     paths.push((id.to_string(), poly_points));
                 }
             }
@@ -305,42 +325,57 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
     let mut static_decls = Vec::new();
     let mut match_data = Vec::new();
 
-    for (index, (id, polys)) in paths.into_iter().enumerate() {
+    for (index, (id, poly_points)) in paths.into_iter().enumerate() {
         // Include file_id in the static identifier names to avoid collisions
-        let poly_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLY_POINTS", file_id_suffix, index);
+        let points_ident = format_ident!("SVG_FILE_{}_PATH_{}_POINTS", file_id_suffix, index);
+        let polyline_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLYLINE", file_id_suffix, index);
+        let bbox_ident = format_ident!("SVG_FILE_{}_PATH_{}_BBOX", file_id_suffix, index);
+        let polygon_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLYGON", file_id_suffix, index);
 
-        println!("path id: '{}' ", id);
+        eprintln!("path id: '{}' ", id);
 
-        let poly_len = polys.len();
-        let poly_inits: Vec<_> = polys.iter().map(|[x, y]| {
+        let points_len = poly_points.len();
+        let point_inits: Vec<_> = poly_points.iter().map(|[x, y]| {
             quote! {
                 Point::new(#x, #y)
             }
         }).collect();
 
-        // TODO calculate intersections here??
+        // Calculate bounding box at compile time
+        let (bbox_x, bbox_y, bbox_width, bbox_height) = calculate_bounding_box(&poly_points);
 
+        // Generate static declarations for all components
         static_decls.push(quote! {
-            static #poly_ident: [Point; #poly_len] = [#(#poly_inits),*];
+            static #points_ident: [Point; #points_len] = [#(#point_inits),*];
+            static #polyline_ident: Polyline<'static> = Polyline::new(&#points_ident);
+            static #bbox_ident: Rectangle =  Rectangle {
+                top_left: Point::new(#bbox_x,#bbox_y),
+                size: Size::new(#bbox_width,#bbox_height),
+            };
+            static #polygon_ident: ClosedPolygon<'static> = ClosedPolygon {
+                vertices: &#points_ident,
+                polyline: #polyline_ident,
+                bounding_box: #bbox_ident,
+            };
         });
 
-        match_data.push((id.clone(), poly_ident.clone()));
+        match_data.push((id.clone(), polygon_ident.clone()));
     }
 
     // Generate a function name specific to this file_id
     let get_svg_path_fn = format_ident!("get_svg_path_by_id_file_{}", file_id_suffix);
 
     // Generate match arms for the function
-    let match_arms: Vec<_> = match_data.iter().map(|(id, poly_ident)| {
+    let match_arms: Vec<_> = match_data.iter().map(|(id, polygon_ident)| {
         quote! {
-            #id => Some(ClosedPolygon::new_static(&#poly_ident[..]))
+            #id => Some(&#polygon_ident)
         }
     }).collect();
 
     let output = quote! {
         #(#static_decls)*
 
-        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedPolygon> {
+        pub fn #get_svg_path_fn(path_id: &str) -> Option<&'static ClosedPolygon<'static>> {
             match path_id {
                 #(#match_arms,)*
                 _ => None,
