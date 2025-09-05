@@ -98,11 +98,15 @@ where
     }
 }
 
+
+
 /// Variable scanline intersection type
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ScanlineIntersections<'a> {
-    /// Scanlines containing intersections of the form: [intersect_y, x0, x1, x2...xN]
-    /// In a "jagged" or "ragged" array where each row is variable length
+    /// Scanlines containing intersections of the form: [x0, x1, x2...xN] in a jagged array.
+    /// The scanline y coordinate is implicit from context, where a polygon
+    /// with a bounding box from min_y .. max_y should have at least one scanline
+    /// intersection at every y in that range.
     pub data: &'a [&'a [i32]],
 }
 
@@ -121,13 +125,6 @@ impl IntersectionBuffer {
         Self {
             intersections: [0; Self::MAX_INTERSECTIONS],
             count: 0,
-        }
-    }
-
-    pub fn with_intersections(intersections: [i32; Self::MAX_INTERSECTIONS], count: usize) -> Self {
-        Self {
-            intersections,
-            count,
         }
     }
 
