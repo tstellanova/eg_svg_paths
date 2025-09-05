@@ -23,6 +23,8 @@ pub struct ClosedPolygon<'a> {
     pub polyline: Polyline<'a>,
     /// Cached polygon bounding box
     pub bounding_box: Rectangle,
+    /// Maybe cached scanline intersections
+    pub scanlines: Option<ScanlineIntersections<'a>>,
 }
 
 impl<'a> ClosedPolygon<'a> {
@@ -43,6 +45,7 @@ impl<'a> ClosedPolygon<'a> {
             vertices,
             polyline,
             bounding_box,
+            scanlines: None,
         })
     }
 
@@ -51,34 +54,6 @@ impl<'a> ClosedPolygon<'a> {
         self.vertices
     }
 
-    /// Find intersections of a horizontal scanline at y with our polygon edges
-    pub fn find_scanline_intersections(vertices: &[Point], y: i32, scanline_intersections: &mut IntersectionBuffer) {
-        scanline_intersections.clear();
-        let n = vertices.len();
-
-        for i in 0..n {
-            let p1 = vertices[i];
-            let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
-
-            // Skip horizontal edges
-            if p1.y == p2.y {
-                continue;
-            }
-
-            // Check if scanline intersects this edge
-            let min_y = p1.y.min(p2.y);
-            let max_y = p1.y.max(p2.y);
-
-            if y >= min_y && y < max_y {
-                // Calculate intersection x coordinate
-                let x = p1.x + ((y - p1.y) * (p2.x - p1.x)) / (p2.y - p1.y);
-                let _ = scanline_intersections.push(x);
-            }
-        }
-
-        scanline_intersections.sort();
-    }
-    
     /// Create a styled version of this polygon
     pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedPolygon<'a, C>
     where
@@ -121,6 +96,14 @@ where
     fn bounding_box(&self) -> Rectangle {
         self.polygon.bounding_box()
     }
+}
+
+/// Variable scanline intersection type
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScanlineIntersections<'a> {
+    /// Scanlines containing intersections of the form: [intersect_y, x0, x1, x2...xN]
+    /// In a "jagged" or "ragged" array where each row is variable length
+    pub data: &'a [&'a [i32]],
 }
 
 /// Fixed-size intersection buffer for scanline algorithm

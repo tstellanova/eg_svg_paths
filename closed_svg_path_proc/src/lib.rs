@@ -330,6 +330,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
         let points_ident = format_ident!("SVG_FILE_{}_PATH_{}_POINTS", file_id_suffix, index);
         let polyline_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLYLINE", file_id_suffix, index);
         let bbox_ident = format_ident!("SVG_FILE_{}_PATH_{}_BBOX", file_id_suffix, index);
+        let scanlines_ident = format_ident!("SVG_FILE_{}_PATH_{}_SCANLS", file_id_suffix, index);
         let polygon_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLYGON", file_id_suffix, index);
 
         eprintln!("path id: '{}' ", id);
@@ -356,6 +357,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                 vertices: &#points_ident,
                 polyline: #polyline_ident,
                 bounding_box: #bbox_ident,
+                scanlines: None,
             };
         });
 
