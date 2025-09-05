@@ -1,4 +1,7 @@
+use proc_macro2::Literal;
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
+
 use quote::{quote, format_ident};
 use syn::{parse_macro_input, LitStr, Token};
 use std::env;
@@ -85,8 +88,9 @@ fn round_segment_start(seg: BezierSegment) -> [i32; 2]
     [seg.0[0][0].round() as i32, seg.0[0][1].round() as i32]
 }
 
+type BboxTuple =  (i32, i32, u32, u32);
 // Helper function to calculate bounding box at compile time
-fn calculate_bounding_box(points: &[[i32; 2]]) -> (i32, i32, u32, u32) {
+fn calculate_bounding_box(points: &[[i32; 2]]) -> BboxTuple {
     if points.is_empty() {
         return (0, 0, 0, 0);
     }
@@ -107,6 +111,78 @@ fn calculate_bounding_box(points: &[[i32; 2]]) -> (i32, i32, u32, u32) {
     let height = (max_y - min_y) as u32;
     
     (min_x, min_y, width, height)
+}
+
+fn find_one_scanline_intersections(scanline_y: i32, vertices: &[[i32; 2]]) -> Vec::<i32> {
+    let mut output = Vec::<i32>::new();
+    let n = vertices.len();
+
+    for i in 0..n {
+        let p1 = vertices[i];
+        let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
+
+        // Check if scanline intersects this edge
+        let min_y = p1[1].min(p2[1]);
+        let max_y = p1[1].max(p2[1]);
+
+        if scanline_y >= min_y {
+            if scanline_y < max_y {
+                // Calculate intersection x coordinate
+                let x = p1[0] + ((scanline_y - p1[1]) * (p2[0] - p1[0])) / (p2[1] - p1[1]);
+                output.push(x);
+            }
+            else if scanline_y == max_y { //horizontal
+                output.push(p2[0]);
+            }
+        }
+    }
+
+    output.sort();
+    output.dedup();
+
+    //TODO need to re-sort intersections by x? self.intersections.sort();
+
+    return output;
+}
+
+
+fn find_all_scanline_intersections(vertices: &[[i32; 2]], min_y: i32, max_y: i32) -> Vec<Vec<i32>> {
+    let mut output = Vec::<Vec::<i32>>::new();
+    // min and max y should correspond with the polygon's bounding box
+    for scanline_y in min_y..=max_y {
+        let one_line = find_one_scanline_intersections(scanline_y, vertices);
+        if one_line.len() > 0 {
+            // TODO move scanline_y identifying insertion to here rather than in find_one_scanline_intersections?
+            output.push(one_line);
+        }
+        else {
+            panic!("scanline_y {} min_y {} max_y {} had zero intersections??",scanline_y, min_y, max_y);
+        }
+    }
+    // We expect that there should be at least one intersection per scanline
+    let total_lines_found = output.len(); // the "outer" length
+    let expected_lines = (max_y - min_y + 1) as usize;
+    if total_lines_found != expected_lines {
+        panic!("found {} lines with intersections, expected {}", total_lines_found, expected_lines);
+    }
+    return output;
+}
+
+
+fn vec_to_scanline_intersections_expr(data: &Vec<Vec<i32>>) -> TokenStream2 {
+    let inner_arrays: Vec<TokenStream2> = data
+        .into_iter()
+        .map(|row| {
+            let elements = row.into_iter();
+            quote! { &[#(#elements),*] }
+        })
+        .collect();
+    
+    quote! {
+        ScanlineIntersections {
+            data: &[#(#inner_arrays),*],
+        }
+    }
 }
 
 #[proc_macro]
@@ -342,22 +418,36 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
             }
         }).collect();
 
-        // Calculate bounding box at compile time
+        // Calculate bounding box at macro expansion time
         let (bbox_x, bbox_y, bbox_width, bbox_height) = calculate_bounding_box(&poly_points);
+
+        // Calculate the scanline intersections at macro expansion time
+        let min_scanline_y: i32 = bbox_y;
+        let max_scanline_y: i32 = bbox_y + bbox_height as i32;
+        let scanlines: Vec<Vec<i32>> = find_all_scanline_intersections(&poly_points, min_scanline_y, max_scanline_y);
+        // eprintln!("scanlines: {:?}", scanlines);
+
+        let scanlines_init = vec_to_scanline_intersections_expr(&scanlines);
+        // eprintln!("scanlines_init: {:?}", scanlines_init);
+
+        let path_name_lit = Literal::string(&id.clone());
 
         // Generate static declarations for all components
         static_decls.push(quote! {
+            // #id.clone()
+            #[doc = concat!("SVG path id:", #path_name_lit)]
             static #points_ident: [Point; #points_len] = [#(#point_inits),*];
             static #polyline_ident: Polyline<'static> = Polyline::new(&#points_ident);
             static #bbox_ident: Rectangle =  Rectangle {
                 top_left: Point::new(#bbox_x,#bbox_y),
                 size: Size::new(#bbox_width,#bbox_height),
             };
+            static #scanlines_ident: ScanlineIntersections<'static> = #scanlines_init;
             static #polygon_ident: ClosedPolygon<'static> = ClosedPolygon {
                 vertices: &#points_ident,
                 polyline: #polyline_ident,
                 bounding_box: #bbox_ident,
-                scanlines: None,
+                scanlines: Some(#scanlines_ident),
             };
         });
 
