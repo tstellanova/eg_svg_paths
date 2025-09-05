@@ -1,3 +1,4 @@
+use closed_svg_path::ClosedPolygon;
 use proc_macro::TokenStream;
 use quote::{quote, format_ident};
 use syn::{parse_macro_input, LitStr, Token};
@@ -5,7 +6,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use svgtypes::{PathParser, PathSegment};
-use closed_svg_path::{BezierSegment, ClosedCubicBezierPath};
+use closed_svg_path::{BezierSegment};
 
 // Custom parser for the macro input that accepts any token sequence for file_id
 struct MacroInput {
@@ -52,12 +53,15 @@ fn tokens_to_ident_suffix(tokens: &proc_macro2::TokenStream) -> String {
         .to_string()
 }
 
-fn avg_points(a: [f32; 2], b: [f32; 2]) -> [f32; 2]
+/// Find the average between two points
+const fn avg_points(a: [f32; 2], b: [f32; 2]) -> [f32; 2]
 {
     [(a[0] + b[0]) / 2., (a[1] + b[1]) / 2.]
 }
 
-fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
+
+/// Split a Bezier segment in two
+const fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
 {
     // Split the bezier segment into two segments
     let p0 = seg.0[0];
@@ -75,6 +79,12 @@ fn split_bez_segment(seg: BezierSegment) -> (BezierSegment, BezierSegment)
     // Second sub-curve:[p0ppp, p1pp, p2p, p3]
 
     return ( BezierSegment([p0,p0p,p0pp,p0ppp]), BezierSegment([p0ppp, p1pp, p2p, p3]) )
+}
+
+/// Select the point at the start of the segment, at round it to the closest integer value
+fn round_segment_start(seg: BezierSegment) -> [i32; 2]
+{
+    [seg.0[0][0].round() as i32, seg.0[0][1].round() as i32]
 }
 
 #[proc_macro]
@@ -269,29 +279,24 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                         let (seg100, seg101) = split_bez_segment(seg10);
                         let (seg110, seg111) = split_bez_segment(seg11);
 
-                        poly_points.push([seg000.0[0][0] as i32, seg000.0[0][1] as i32]);
-                        poly_points.push([seg001.0[0][0] as i32, seg001.0[0][1] as i32]);
-                        poly_points.push([seg010.0[0][0] as i32, seg010.0[0][1] as i32]);
-                        poly_points.push([seg011.0[0][0] as i32, seg011.0[0][1] as i32]);
-                        poly_points.push([seg100.0[0][0] as i32, seg100.0[0][1] as i32]);
-                        poly_points.push([seg101.0[0][0] as i32, seg101.0[0][1] as i32]);
-                        poly_points.push([seg110.0[0][0] as i32, seg110.0[0][1] as i32]);
-                        poly_points.push([seg111.0[0][0] as i32, seg111.0[0][1] as i32]);
+                        poly_points.push(round_segment_start(seg000)); 
+                        poly_points.push(round_segment_start(seg001)); 
+                        poly_points.push(round_segment_start(seg010)); 
+                        poly_points.push(round_segment_start(seg011)); 
+                        poly_points.push(round_segment_start(seg100)); 
+                        poly_points.push(round_segment_start(seg101)); 
+                        poly_points.push(round_segment_start(seg110)); 
+                        poly_points.push(round_segment_start(seg111)); 
 
                     }
 
-                    // force-close the polygon?
-                    if let Some(first) = bezier_segments.first() {
-                        poly_points.push([first[0][0] as i32, first[0][1] as i32]);
+                    // force-close the polygon
+                    if let Some(first_poly_pt) = poly_points.first() {
+                        poly_points.push(*first_poly_pt);
                     }
 
-                    let segments_array = bezier_segments.clone()
-                        .into_iter()
-                        .map(BezierSegment)
-                        .collect::<Vec<_>>();
-
-                    let path_bbox = ClosedCubicBezierPath::calculate_bounding_box(&segments_array);
-                    paths.push((id.to_string(), bezier_segments, path_bbox, poly_points));
+                    // TODO calculate scanline intersections?
+                    paths.push((id.to_string(), poly_points));
                 }
             }
         }
@@ -300,30 +305,11 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
     let mut static_decls = Vec::new();
     let mut match_data = Vec::new();
 
-    for (index, (id, segs, bbox, polys)) in paths.into_iter().enumerate() {
+    for (index, (id, polys)) in paths.into_iter().enumerate() {
         // Include file_id in the static identifier names to avoid collisions
-        let seg_ident = format_ident!("SVG_FILE_{}_PATH_{}_BEZIER_SEGMENTS", file_id_suffix, index);
         let poly_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLY_POINTS", file_id_suffix, index);
 
-        println!("path id: '{}' size: {:?}", id, bbox.size);
-        let seg_len = segs.len();
-        let seg_inits: Vec<_> = segs.iter().map(|[p0, p1, p2, p3]| {
-            let p0x = p0[0];
-            let p0y = p0[1];
-            let p1x = p1[0];
-            let p1y = p1[1];
-            let p2x = p2[0];
-            let p2y = p2[1];
-            let p3x = p3[0];
-            let p3y = p3[1];
-            quote! {
-                BezierSegment([[#p0x, #p0y], [#p1x, #p1y], [#p2x, #p2y], [#p3x, #p3y]])
-            }
-        }).collect();
-
-        static_decls.push(quote! {
-            static #seg_ident: [BezierSegment; #seg_len] = [#(#seg_inits),*];
-        });
+        println!("path id: '{}' ", id);
 
         let poly_len = polys.len();
         let poly_inits: Vec<_> = polys.iter().map(|[x, y]| {
@@ -332,46 +318,29 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
             }
         }).collect();
 
+        // TODO calculate intersections here??
+
         static_decls.push(quote! {
             static #poly_ident: [Point; #poly_len] = [#(#poly_inits),*];
         });
 
-         // Output the Rectangle as a struct expression
-        let x = bbox.top_left.x;
-        let y = bbox.top_left.y;
-        let w = bbox.size.width;
-        let h = bbox.size.height;
-
-        let expanded_bbox = quote! {
-            Rectangle::new(
-                Point::new(#x, #y),
-                Size::new(#w, #h),
-            )
-        };
-
-        match_data.push((id.clone(), seg_ident.clone(), poly_ident.clone(), expanded_bbox.clone()));
+        match_data.push((id.clone(), poly_ident.clone()));
     }
 
     // Generate a function name specific to this file_id
     let get_svg_path_fn = format_ident!("get_svg_path_by_id_file_{}", file_id_suffix);
 
     // Generate match arms for the function
-    let match_arms: Vec<_> = match_data.iter().map(|(id, seg_ident, poly_ident, bbox)| {
+    let match_arms: Vec<_> = match_data.iter().map(|(id, poly_ident)| {
         quote! {
-            #id => Some(ClosedCubicBezierPath {
-                bezier_segments: &#seg_ident[..],
-                bounding_box: #bbox,
-                subdivision_count: 8,
-                polyline_approx: Some(Polyline::new(&#poly_ident[..])), 
-                closed_poly: ClosedPolygon::new(&#poly_ident[..]),
-            })
+            #id => Some(ClosedPolygon::new_static(&#poly_ident[..]))
         }
     }).collect();
 
     let output = quote! {
         #(#static_decls)*
 
-        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedCubicBezierPath> {
+        pub fn #get_svg_path_fn(path_id: &str) -> Option<ClosedPolygon> {
             match path_id {
                 #(#match_arms,)*
                 _ => None,

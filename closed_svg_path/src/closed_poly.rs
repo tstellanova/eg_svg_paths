@@ -1,3 +1,14 @@
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    geometry::{Dimensions, Point},
+    pixelcolor::PixelColor,
+    primitives::{
+        polyline::Polyline,
+        Line, PrimitiveStyle, Rectangle, Styled,
+    },
+    Drawable, Pixel,
+};
+
 impl<'a, C> StyledPolygonIterator<'a, C>
 where
     C: PixelColor,
@@ -47,16 +58,7 @@ where
     }
 }
 
-use embedded_graphics::{
-    draw_target::DrawTarget,
-    geometry::{Dimensions, Point, Size},
-    pixelcolor::PixelColor,
-    primitives::{
-        polyline::Polyline,
-        Line, PrimitiveStyle, Rectangle, Styled,
-    },
-    Drawable, Pixel,
-};
+
 
 /// Maximum number of intersections per scanline
 const MAX_INTERSECTIONS: usize = 64;
@@ -88,7 +90,7 @@ impl<'a> ClosedPolygon<'a> {
 
         // Create polyline with original points
         let polyline = Polyline::new(points);
-        let bounding_box = Self::calculate_bounding_box(points);
+        let bounding_box = polyline.bounding_box();
 
         Some(ClosedPolygon {
             points,
@@ -97,28 +99,21 @@ impl<'a> ClosedPolygon<'a> {
         })
     }
 
-    /// Calculate the bounding box for the given points
-    fn calculate_bounding_box(points: &[Point]) -> Rectangle {
-        if points.is_empty() {
-            return Rectangle::zero();
+    pub fn new_static(points: &'static [Point]) -> Self {
+        // Create polyline with original points
+        let polyline = Polyline::new(points);
+        let bounding_box = polyline.bounding_box();
+
+        // const MAX_SCANLINES: i32 = 240;
+        // let mut all_intersections: [IntersectionBuffer; MAX_SCANLINES as usize] = [IntersectionBuffer::new() ; MAX_SCANLINES as usize];
+        // for y in 0..MAX_SCANLINES {
+        //     Self::find_scanline_intersections(points, y, &mut all_intersections[y as usize]);
+        // }
+        ClosedPolygon {
+            points,
+            polyline,
+            bounding_box,
         }
-
-        let mut min_x = points[0].x;
-        let mut max_x = points[0].x;
-        let mut min_y = points[0].y;
-        let mut max_y = points[0].y;
-
-        for &point in points.iter().skip(1) {
-            min_x = min_x.min(point.x);
-            max_x = max_x.max(point.x);
-            min_y = min_y.min(point.y);
-            max_y = max_y.max(point.y);
-        }
-
-        Rectangle::new(
-            Point::new(min_x, min_y),
-            Size::new((max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32),
-        )
     }
 
     /// Get the vertices of the polygon
@@ -126,6 +121,34 @@ impl<'a> ClosedPolygon<'a> {
         self.points
     }
 
+    /// Find intersections of a horizontal scanline at y with our polygon edges
+    fn find_scanline_intersections(vertices: &[Point], y: i32, scanline_intersections: &mut IntersectionBuffer) {
+        scanline_intersections.clear();
+        let n = vertices.len();
+
+        for i in 0..n {
+            let p1 = vertices[i];
+            let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
+
+            // Skip horizontal edges
+            if p1.y == p2.y {
+                continue;
+            }
+
+            // Check if scanline intersects this edge
+            let min_y = p1.y.min(p2.y);
+            let max_y = p1.y.max(p2.y);
+
+            if y >= min_y && y < max_y {
+                // Calculate intersection x coordinate
+                let x = p1.x + ((y - p1.y) * (p2.x - p1.x)) / (p2.y - p1.y);
+                let _ = scanline_intersections.push(x);
+            }
+        }
+
+        scanline_intersections.sort();
+    }
+    
     /// Create a styled version of this polygon
     pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedPolygon<'a, C>
     where
@@ -171,7 +194,7 @@ where
 }
 
 /// Fixed-size intersection buffer for scanline algorithm
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 struct IntersectionBuffer {
     intersections: [i32; MAX_INTERSECTIONS],
     count: usize,
