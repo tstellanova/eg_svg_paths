@@ -60,9 +60,6 @@ where
 
 
 
-/// Maximum number of intersections per scanline
-const MAX_INTERSECTIONS: usize = 64;
-
 /// A closed polygon primitive that extends Polyline functionality
 /// 
 /// This struct represents a polygon where the last point is automatically connected
@@ -122,7 +119,7 @@ impl<'a> ClosedPolygon<'a> {
     }
 
     /// Find intersections of a horizontal scanline at y with our polygon edges
-    fn find_scanline_intersections(vertices: &[Point], y: i32, scanline_intersections: &mut IntersectionBuffer) {
+    pub fn find_scanline_intersections(vertices: &[Point], y: i32, scanline_intersections: &mut IntersectionBuffer) {
         scanline_intersections.clear();
         let n = vertices.len();
 
@@ -195,16 +192,26 @@ where
 
 /// Fixed-size intersection buffer for scanline algorithm
 #[derive(Copy, Clone, Debug)]
-struct IntersectionBuffer {
-    intersections: [i32; MAX_INTERSECTIONS],
+pub struct IntersectionBuffer {
+    intersections: [i32; Self::MAX_INTERSECTIONS],
     count: usize,
 }
 
 impl IntersectionBuffer {
+    /// Maximum supported number of intersections between the polygon per scanline
+    pub const MAX_INTERSECTIONS: usize = 16;
+
     fn new() -> Self {
         Self {
-            intersections: [0; MAX_INTERSECTIONS],
+            intersections: [0; Self::MAX_INTERSECTIONS],
             count: 0,
+        }
+    }
+
+    pub fn with_intersections(intersections: [i32; Self::MAX_INTERSECTIONS], count: usize) -> Self {
+        Self {
+            intersections,
+            count,
         }
     }
 
@@ -213,7 +220,7 @@ impl IntersectionBuffer {
     }
 
     fn push(&mut self, x: i32) -> bool {
-        if self.count < MAX_INTERSECTIONS {
+        if self.count < Self::MAX_INTERSECTIONS {
             self.intersections[self.count] = x;
             self.count += 1;
             true
