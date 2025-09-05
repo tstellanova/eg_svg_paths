@@ -9,70 +9,20 @@ use embedded_graphics::{
     Drawable, Pixel,
 };
 
-impl<'a, C> StyledPolygonIterator<'a, C>
-where
-    C: PixelColor,
-{
-    fn new(polygon: &'a StyledClosedPolygon<'a, C>) -> Self {
-        // Use the existing polyline for the main stroke
-        let polyline_iter = if polygon.style.stroke_color.is_some() {
-            let styled_polyline = Styled::new(polygon.polygon.polyline.clone(), polygon.style);
-            Some(styled_polyline.pixels())
-        } else {
-            None
-        };
 
-        // Create closing line from last point to first point
-        let closing_line_iter = if polygon.style.stroke_color.is_some() && polygon.polygon.vertices().len() >= 2 {
-            let vertices = polygon.polygon.vertices();
-            let last_point = vertices[vertices.len() - 1];
-            let first_point = vertices[0];
-            
-            if last_point != first_point { // Only add closing line if not already closed
-                let closing_line = Line::new(last_point, first_point);
-                let styled_closing_line = Styled::new(closing_line, polygon.style);
-                Some(styled_closing_line.pixels())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let fill_iter = if let Some(fill_color) = polygon.style.fill_color {
-            Some(PolygonFillIterator::new(&polygon.polygon, fill_color))
-        } else {
-            None
-        };
-
-        let has_closing_stroke = closing_line_iter.is_some();
-        
-        Self {
-            polyline_iter,
-            closing_line_iter,
-            fill_iter,
-            drawing_fill: polygon.style.fill_color.is_some(),
-            drawing_polyline_stroke: polygon.style.stroke_color.is_some(),
-            drawing_closing_stroke: has_closing_stroke,
-        }
-    }
-}
-
-
-
-/// A closed polygon primitive that extends Polyline functionality
+/// A closed polygon primitive that extends Polyline functionality.
 /// 
 /// This struct represents a polygon where the last point is automatically connected
 /// to the first point to form a closed shape. It supports both stroke and fill operations
 /// using scanline algorithms suitable for embedded environments.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClosedPolygon<'a> {
-    /// The original points that define the polygon vertices
-    points: &'a [Point],
-    /// The underlying polyline that defines the polygon vertices
-    polyline: Polyline<'a>,
-    /// Cached bounding box for performance
-    bounding_box: Rectangle,
+    /// The closed polygon vertices (first point matches last point)
+    pub vertices: &'a [Point],
+    /// The polyline defined by the closed polygon vertices
+    pub polyline: Polyline<'a>,
+    /// Cached polygon bounding box
+    pub bounding_box: Rectangle,
 }
 
 impl<'a> ClosedPolygon<'a> {
@@ -80,42 +30,25 @@ impl<'a> ClosedPolygon<'a> {
     /// 
     /// The polygon will automatically be closed by connecting the last point to the first.
     /// Requires at least 3 points to form a valid polygon.
-    pub fn new(points: &'a [Point]) -> Option<Self> {
-        if points.len() < 3 {
+    pub fn new(vertices: &'a [Point]) -> Option<Self> {
+        if vertices.len() < 3 {
             return None;
         }
 
         // Create polyline with original points
-        let polyline = Polyline::new(points);
+        let polyline = Polyline::new(vertices);
         let bounding_box = polyline.bounding_box();
 
         Some(ClosedPolygon {
-            points,
+            vertices,
             polyline,
             bounding_box,
         })
     }
 
-    pub fn new_static(points: &'static [Point]) -> Self {
-        // Create polyline with original points
-        let polyline = Polyline::new(points);
-        let bounding_box = polyline.bounding_box();
-
-        // const MAX_SCANLINES: i32 = 240;
-        // let mut all_intersections: [IntersectionBuffer; MAX_SCANLINES as usize] = [IntersectionBuffer::new() ; MAX_SCANLINES as usize];
-        // for y in 0..MAX_SCANLINES {
-        //     Self::find_scanline_intersections(points, y, &mut all_intersections[y as usize]);
-        // }
-        ClosedPolygon {
-            points,
-            polyline,
-            bounding_box,
-        }
-    }
-
     /// Get the vertices of the polygon
     pub fn vertices(&self) -> &[Point] {
-        self.points
+        self.vertices
     }
 
     /// Find intersections of a horizontal scanline at y with our polygon edges
@@ -459,6 +392,56 @@ where
         target.draw_iter(StyledPolygonIterator::new(self))
     }
 }
+
+impl<'a, C> StyledPolygonIterator<'a, C>
+where
+    C: PixelColor,
+{
+    fn new(polygon: &'a StyledClosedPolygon<'a, C>) -> Self {
+        // Use the existing polyline for the main stroke
+        let polyline_iter = if polygon.style.stroke_color.is_some() {
+            let styled_polyline = Styled::new(polygon.polygon.polyline.clone(), polygon.style);
+            Some(styled_polyline.pixels())
+        } else {
+            None
+        };
+
+        // Create closing line from last point to first point
+        let closing_line_iter = if polygon.style.stroke_color.is_some() && polygon.polygon.vertices().len() >= 2 {
+            let vertices = polygon.polygon.vertices();
+            let last_point = vertices[vertices.len() - 1];
+            let first_point = vertices[0];
+            
+            if last_point != first_point { // Only add closing line if not already closed
+                let closing_line = Line::new(last_point, first_point);
+                let styled_closing_line = Styled::new(closing_line, polygon.style);
+                Some(styled_closing_line.pixels())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let fill_iter = if let Some(fill_color) = polygon.style.fill_color {
+            Some(PolygonFillIterator::new(&polygon.polygon, fill_color))
+        } else {
+            None
+        };
+
+        let has_closing_stroke = closing_line_iter.is_some();
+        
+        Self {
+            polyline_iter,
+            closing_line_iter,
+            fill_iter,
+            drawing_fill: polygon.style.fill_color.is_some(),
+            drawing_polyline_stroke: polygon.style.stroke_color.is_some(),
+            drawing_closing_stroke: has_closing_stroke,
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
