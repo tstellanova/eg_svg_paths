@@ -54,6 +54,21 @@ impl<'a> ClosedPolygon<'a> {
         self.vertices
     }
 
+    pub fn total_size(&self) -> usize {
+        // Base size of the struct itself (includes fat pointer + flag + padding)
+        let mut total = size_of::<Self>();
+
+        // add the statically allocated size of points
+        total += self.vertices.len() * size_of::<[i32;2]>();
+
+        // Add the sizes of all scanlines
+        if let Some(scanlines) = self.scanlines {
+            total += scanlines.total_size();
+        }
+
+        total
+    }
+
     /// Create a styled version of this polygon
     pub fn into_styled<C>(self, style: PrimitiveStyle<C>) -> StyledClosedPolygon<'a, C>
     where
@@ -108,6 +123,23 @@ pub struct ScanlineIntersections<'a> {
     /// with a bounding box from min_y .. max_y should have at least one scanline
     /// intersection at every y in that range.
     pub data: &'a [&'a [i32]],
+}
+
+impl ScanlineIntersections<'_> {
+    pub fn total_size(&self) -> usize {
+        // Base size of the struct itself (includes fat pointer + flag + padding)
+        let mut total = size_of::<Self>();
+
+        // Add the size of the slice backing array (the outer slice of inner slice pointers)
+        total += self.data.len() * size_of::<&[i32]>();
+
+        // Add the sizes of all inner arrays
+        for inner in self.data.iter() {
+            total += inner.len() * size_of::<i32>();
+        }
+
+        total
+    }
 }
 
 /// Iterator for polygon fill pixels using scanline algorithm
