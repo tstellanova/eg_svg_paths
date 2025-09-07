@@ -3,8 +3,8 @@ use embedded_graphics::{
     geometry::{Dimensions, Point},
     pixelcolor::PixelColor,
     primitives::{
-        polyline::Polyline,
-        Line, PrimitiveStyle, Rectangle, Styled,
+        polyline::{self,Polyline},
+        PrimitiveStyle, Rectangle, Styled,
     },
     Drawable, Pixel,
 };
@@ -110,62 +110,6 @@ pub struct ScanlineIntersections<'a> {
     pub data: &'a [&'a [i32]],
 }
 
-/// Fixed-size intersection buffer for scanline algorithm
-#[derive(Copy, Clone, Debug)]
-pub struct IntersectionBuffer {
-    intersections: [i32; Self::MAX_INTERSECTIONS],
-    count: usize,
-}
-
-impl IntersectionBuffer {
-    /// Maximum supported number of intersections between the polygon per scanline
-    pub const MAX_INTERSECTIONS: usize = 16;
-
-    fn new() -> Self {
-        Self {
-            intersections: [0; Self::MAX_INTERSECTIONS],
-            count: 0,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.count = 0;
-    }
-
-    fn push(&mut self, x: i32) -> bool {
-        if self.count < Self::MAX_INTERSECTIONS {
-            self.intersections[self.count] = x;
-            self.count += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.count
-    }
-
-    fn get(&self, index: usize) -> Option<i32> {
-        if index < self.count {
-            Some(self.intersections[index])
-        } else {
-            None
-        }
-    }
-
-    /// Sort intersections using bubble sort (no_std compatible)
-    fn sort(&mut self) {
-        for i in 0..self.count {
-            for j in 0..self.count.saturating_sub(1).saturating_sub(i) {
-                if self.intersections[j] > self.intersections[j + 1] {
-                    self.intersections.swap(j, j + 1);
-                }
-            }
-        }
-    }
-}
-
 /// Iterator for polygon fill pixels using scanline algorithm
 pub struct PolygonFillIterator<'a, C>
 where
@@ -178,7 +122,6 @@ where
     current_x: i32,
     current_span_end: i32,
     intersection_index: usize,
-    intersections: IntersectionBuffer,
     spans_processed: bool,
 }
 
@@ -196,72 +139,42 @@ where
             current_x: 0,
             current_span_end: 0,
             intersection_index: 0,
-            intersections: IntersectionBuffer::new(),
             spans_processed: false,
         }
     }
 
-    /// Find intersections of a horizontal line at y with polygon edges
-    fn find_intersections(&mut self, y: i32) {
-        self.intersections.clear();
-        let vertices = self.polygon.vertices();
-        let n = vertices.len();
-
-        for i in 0..n {
-            let p1 = vertices[i];
-            let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
-
-            // Skip horizontal edges
-            if p1.y == p2.y {
-                continue;
-            }
-
-            // Check if scanline intersects this edge
-            let min_y = p1.y.min(p2.y);
-            let max_y = p1.y.max(p2.y);
-
-            if y >= min_y && y < max_y {
-                // Calculate intersection x coordinate
-                let x = p1.x + ((y - p1.y) * (p2.x - p1.x)) / (p2.y - p1.y);
-                let _ = self.intersections.push(x);
-            }
-        }
-
-        self.intersections.sort();
-    }
-
     /// Process current scanline and setup for pixel iteration
-    fn process_scanline(&mut self) -> bool {
+    fn process_scanline_spans(&mut self) -> bool {
+        assert!(self.polygon.scanlines.is_some(), "migrated to preprocessed scanlines");
+
         while self.current_y < self.end_y {
-            self.find_intersections(self.current_y);
-            
-            if self.intersections.len() >= 2 {
-                self.intersection_index = 0;
-                self.spans_processed = false;
-                return self.setup_next_span();
-            }
-            
-            self.current_y += 1;
+            self.intersection_index = 0;
+            self.spans_processed = false;
+            return self.setup_next_span_new();
+        }
+        self.current_y += 1;
+        false
+    }
+
+    /// Setup the next span for pixel iteration.
+    /// A span is a contiguous group of pixels on a scanline.
+    fn setup_next_span_new(&mut self) -> bool {
+        let scan_yidx = (self.current_y - self.polygon.bounding_box.top_left.y) as usize;
+        let cur_line_data: &'a [i32]= self.polygon.scanlines.unwrap().data[scan_yidx];
+        assert!(cur_line_data.len() >= 2, "scanlines contain at least 2 intersections");
+
+        // we evaulate pairs of intersection points
+        while self.intersection_index + 1 < cur_line_data.len() {
+            let x_start = cur_line_data[self.intersection_index];
+            let x_end = cur_line_data[self.intersection_index+1];
+            self.current_x = x_start;
+            self.current_span_end = x_end;
+            self.intersection_index += 2;
+            return true;
         }
         false
     }
 
-    /// Setup the next span for pixel iteration
-    fn setup_next_span(&mut self) -> bool {
-        while self.intersection_index + 1 < self.intersections.len() {
-            if let (Some(x_start), Some(x_end)) = (
-                self.intersections.get(self.intersection_index),
-                self.intersections.get(self.intersection_index + 1),
-            ) {
-                self.current_x = x_start;
-                self.current_span_end = x_end;
-                self.intersection_index += 2;
-                return true;
-            }
-            self.intersection_index += 2;
-        }
-        false
-    }
 }
 
 impl<'a, C> Iterator for PolygonFillIterator<'a, C>
@@ -274,7 +187,7 @@ where
         loop {
             // If we haven't processed spans for current scanline, do it now
             if !self.spans_processed {
-                if !self.process_scanline() {
+                if !self.process_scanline_spans() {
                     return None;
                 }
                 self.spans_processed = true;
@@ -288,7 +201,7 @@ where
             }
 
             // Try to setup the next span
-            if self.setup_next_span() {
+            if self.setup_next_span_new() {
                 continue;
             }
 
@@ -308,12 +221,10 @@ pub struct StyledPolygonIterator<'a, C>
 where
     C: PixelColor,
 {
-    polyline_iter: Option<embedded_graphics::primitives::polyline::StyledPixelsIterator<'a, C>>,
-    closing_line_iter: Option<embedded_graphics::primitives::line::StyledPixelsIterator<C>>,
+    stroke_iter: Option<polyline::StyledPixelsIterator<'a, C>>,
     fill_iter: Option<PolygonFillIterator<'a, C>>,
-    drawing_fill: bool,
-    drawing_polyline_stroke: bool,
-    drawing_closing_stroke: bool,
+    fill_dirty: bool,
+    stroke_dirty: bool,
 }
 
 
@@ -324,34 +235,22 @@ where
     type Item = Pixel<C>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // First draw all fill pixels (background layer)
-        if self.drawing_fill {
-            if let Some(ref mut fill_iter) = self.fill_iter {
-                if let Some(pixel) = fill_iter.next() {
-                    return Some(pixel);
-                }
+        // First draw all fill pixels of closed polygon
+        if self.fill_dirty {
+            let pixel_opt = self.fill_iter.as_mut().unwrap().next();
+            if pixel_opt.is_some() {
+                return pixel_opt;
             }
-            self.drawing_fill = false;
+            self.fill_dirty = false;
         }
-
-        // Then draw polyline stroke pixels (main edges of polygon)
-        if self.drawing_polyline_stroke {
-            if let Some(ref mut polyline_iter) = self.polyline_iter {
-                if let Some(pixel) = polyline_iter.next() {
-                    return Some(pixel);
-                }
+        
+        // Then draw edges of closed polygon
+        if self.stroke_dirty {
+            let pixel_opt =  self.stroke_iter.as_mut().unwrap().next();
+            if pixel_opt.is_some() {
+                return pixel_opt;
             }
-            self.drawing_polyline_stroke = false;
-        }
-
-        // Finally draw closing line stroke pixels (edge from last to first point)
-        if self.drawing_closing_stroke {
-            if let Some(ref mut closing_line_iter) = self.closing_line_iter {
-                if let Some(pixel) = closing_line_iter.next() {
-                    return Some(pixel);
-                }
-            }
-            self.drawing_closing_stroke = false;
+            self.stroke_dirty = false;
         }
 
         None
@@ -378,30 +277,8 @@ where
     C: PixelColor,
 {
     fn new(polygon: &'a StyledClosedPolygon<'a, C>) -> Self {
-        // Use the existing polyline for the main stroke
-        let polyline_iter = if polygon.style.stroke_color.is_some() {
-            let styled_polyline = Styled::new(polygon.polygon.polyline.clone(), polygon.style);
-            Some(styled_polyline.pixels())
-        } else {
-            None
-        };
-
-        // Create closing line from last point to first point
-        let closing_line_iter = if polygon.style.stroke_color.is_some() && polygon.polygon.vertices().len() >= 2 {
-            let vertices = polygon.polygon.vertices();
-            let last_point = vertices[vertices.len() - 1];
-            let first_point = vertices[0];
-            
-            if last_point != first_point { // Only add closing line if not already closed
-                let closing_line = Line::new(last_point, first_point);
-                let styled_closing_line = Styled::new(closing_line, polygon.style);
-                Some(styled_closing_line.pixels())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let have_stroke =  polygon.style.stroke_color.is_some();
+        let have_fill = polygon.style.fill_color.is_some();
 
         let fill_iter = if let Some(fill_color) = polygon.style.fill_color {
             Some(PolygonFillIterator::new(&polygon.polygon, fill_color))
@@ -409,15 +286,21 @@ where
             None
         };
 
-        let has_closing_stroke = closing_line_iter.is_some();
+        // Use the existing polyline for the stroke
+        let polyline_iter = if have_stroke {
+            let styled_polyline = Styled::new(polygon.polygon.polyline.clone(), polygon.style);
+            Some(styled_polyline.pixels())
+        } else {
+            None
+        };
+
+
         
         Self {
-            polyline_iter,
-            closing_line_iter,
+            stroke_iter: polyline_iter,
             fill_iter,
-            drawing_fill: polygon.style.fill_color.is_some(),
-            drawing_polyline_stroke: polygon.style.stroke_color.is_some(),
-            drawing_closing_stroke: has_closing_stroke,
+            fill_dirty: have_fill,
+            stroke_dirty: have_stroke,
         }
     }
 }
@@ -489,19 +372,4 @@ mod tests {
         assert!(polygon.is_none());
     }
 
-    #[test]
-    fn test_intersection_buffer() {
-        let mut buffer = IntersectionBuffer::new();
-        
-        assert!(buffer.push(10));
-        assert!(buffer.push(5));
-        assert!(buffer.push(15));
-        
-        buffer.sort();
-        
-        assert_eq!(buffer.get(0), Some(5));
-        assert_eq!(buffer.get(1), Some(10));
-        assert_eq!(buffer.get(2), Some(15));
-        assert_eq!(buffer.len(), 3);
-    }
 }

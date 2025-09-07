@@ -88,84 +88,139 @@ fn round_segment_start(seg: BezierSegment) -> [i32; 2]
     [seg.0[0][0].round() as i32, seg.0[0][1].round() as i32]
 }
 
+/// Bounding box tuple for top_left.x, top_left.y, size.width, size.height 
 type BboxTuple =  (i32, i32, u32, u32);
-// Helper function to calculate bounding box at compile time
-fn calculate_bounding_box(points: &[[i32; 2]]) -> BboxTuple {
-    if points.is_empty() {
-        return (0, 0, 0, 0);
+
+/// Helper function to calculate bounding box of polygon vertices at compile time
+fn calculate_bounding_box(vertices: &[[i32; 2]]) -> BboxTuple {
+    // compute bounding box
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+    for v in vertices {
+        min_x = min_x.min(v[0]);
+        min_y = min_y.min(v[1]);
+        max_x = max_x.max(v[0]);
+        max_y = max_y.max(v[1]);
     }
-    
-    let mut min_x = points[0][0];
-    let mut max_x = points[0][0];
-    let mut min_y = points[0][1];
-    let mut max_y = points[0][1];
-    
-    for &[x, y] in points.iter().skip(1) {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    
+
     let width = (max_x - min_x) as u32;
     let height = (max_y - min_y) as u32;
     
     (min_x, min_y, width, height)
 }
 
-fn find_one_scanline_intersections(scanline_y: i32, vertices: &[[i32; 2]]) -> Vec::<i32> {
-    let mut output = Vec::<i32>::new();
-    let n = vertices.len();
-
-    for i in 0..n {
-        let p1 = vertices[i];
-        let p2 = vertices[(i + 1) % n]; // Wrap around to close the polygon
-
-        // Check if scanline intersects this edge
-        let min_y = p1[1].min(p2[1]);
-        let max_y = p1[1].max(p2[1]);
-
-        if scanline_y >= min_y {
-            if scanline_y < max_y {
-                // Calculate intersection x coordinate
-                let x = p1[0] + ((scanline_y - p1[1]) * (p2[0] - p1[0])) / (p2[1] - p1[1]);
-                output.push(x);
-            }
-            else if scanline_y == max_y { //horizontal
-                output.push(p2[0]);
-            }
-        }
-    }
-
-    output.sort();
-    output.dedup();
-
-    //TODO need to re-sort intersections by x? self.intersections.sort();
-
-    return output;
+/// Helper struct for first calculating then analyzing polygon edges
+#[derive(Clone, Copy, Debug)]
+struct Edge {
+    y_max: i32,     // exclusive: edge is active for y in [y_min, y_max)
+    current_x: f64, // x at the current scanline
+    inv_slope: f64, // dx/dy
 }
 
+/// Returns a Vec<Vec<i32>>, where result[y - bbox.min_y] holds the integer x intersections
+/// (rounded) for scanline y, for y in [bbox.min_y, bbox.max_y).
+///
+/// - `vertices` must be a closed polygon (first == last) or the function will treat it cyclically.
+/// - Horizontal edges are skipped, because their fill is covered by neighboring edges.
+///
+/// This code runs at compile time, during macro expansion, so we're not overly concerned with performance.
+fn scanline_intersections(vertices: &[[i32; 2]], bbox: BboxTuple) -> Vec<Vec<i32>> {
+    assert!(vertices.len() >= 3, "need at least 3 vertices for fill");
+    let min_x = bbox.0;
+    let max_x = min_x + bbox.2 as i32;
+    let min_y = bbox.1;
+    let max_y = min_y + bbox.3 as i32;
 
-fn find_all_scanline_intersections(vertices: &[[i32; 2]], min_y: i32, max_y: i32) -> Vec<Vec<i32>> {
-    let mut output = Vec::<Vec::<i32>>::new();
-    // min and max y should correspond with the polygon's bounding box
-    for scanline_y in min_y..=max_y {
-        let one_line = find_one_scanline_intersections(scanline_y, vertices);
-        if one_line.len() > 0 {
-            // TODO move scanline_y identifying insertion to here rather than in find_one_scanline_intersections?
-            output.push(one_line);
+    assert!(min_y != max_y, "polygon shape is a horizontal line");
+    assert!(min_x != max_x, "polygon shape is a vertical line");
+
+    // Edge Table: bucket edges by ymin relative to min_y.
+    let height = (max_y - min_y) as usize; // number of integer scanlines in [min_y, max_y)
+    let mut edge_table: Vec<Vec<Edge>> = vec![Vec::new(); height];
+
+    // Build edge table from polygon
+    let n = vertices.len();
+    for i in 0..n {
+        let a = vertices[i];
+        let b = vertices[(i + 1) % n]; // wrap last->first vertex 
+
+        let x0 = a[0];
+        let y0 = a[1];
+        let x1 = b[0];
+        let y1 = b[1];
+
+        // Skip horizontal edges
+        if y0 == y1 {
+            continue;
         }
-        else {
-            panic!("scanline_y {} min_y {} max_y {} had zero intersections??",scanline_y, min_y, max_y);
+
+        // y_min, y_max for half-open interval [ymin, ymax)
+        let (y_min, x_at_ymin, y_max, x_at_ymax) = 
+            if y0 < y1 {
+                (y0, x0 as f64, y1, x1 as f64)
+            } else {
+                (y1, x1 as f64, y0, x0 as f64)
+            };
+
+        let dy = (y_max - y_min) as f64;
+        // inv_slope = dx / dy
+        let inv_slope = (x_at_ymax - x_at_ymin) / dy;
+
+        let bucket_index = (y_min - min_y) as isize;
+        if bucket_index >= 0 && (bucket_index as usize) < edge_table.len() {
+            edge_table[bucket_index as usize].push(Edge {
+                y_max,
+                current_x: x_at_ymin, // starting x at scanline y_min
+                inv_slope,
+            });
         }
     }
-    // We expect that there should be at least one intersection per scanline
-    let total_lines_found = output.len(); // the "outer" length
-    let expected_lines = (max_y - min_y + 1) as usize;
-    if total_lines_found != expected_lines {
-        panic!("found {} lines with intersections, expected {}", total_lines_found, expected_lines);
+
+    // Active Edge Table
+    let mut aet: Vec<Edge> = Vec::new();
+    // let mut result = Vec::<Vec::<i32>>::with_capacity(height);
+    let mut result: Vec<Vec<i32>> = vec![Vec::new(); height];
+
+    // Scan each integer scanline y in [min_y, max_y)
+    for rel_scan_yidx in 0..height {
+        let y = min_y + rel_scan_yidx as i32;
+
+        // 1) Add edges whose ymin == y
+        let new_edges = std::mem::take(&mut edge_table[rel_scan_yidx]);
+        for e in new_edges {
+            aet.push(e);
+        }
+
+        // 2) Remove edges for which y >= y_max (they are no longer active).
+        // Note: because we use half-open [ymin, ymax) convention,
+        // an edge with y_max == y will not be active at y.
+        aet.retain(|e| y < e.y_max);
+
+        // 3) For each active edge compute intersection x at this scanline.
+        // We stored current_x as x_at_ymin and will update it after use.
+        // Make a temporary vector of intersections (x)
+        let mut xs: Vec<f64> = Vec::with_capacity(aet.len());
+        for e in &aet {
+            xs.push(e.current_x);
+        }
+
+        // 4) Sort intersections
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 5) Convert to integers (rounded). You can change rounding strategy here.
+        let xi: Vec<i32> = xs.into_iter().map(|xf| xf.round() as i32).collect();
+        result[rel_scan_yidx] = xi;
+        assert!(result[rel_scan_yidx].len() >= 2, "Each scanline should have min 2 intersections.");
+
+        // 6) Increment current_x for each active edge for next scanline (y+1)
+        for e in &mut aet {
+            e.current_x += e.inv_slope;
+        }
     }
-    return output;
+
+    return result;
 }
 
 
@@ -420,22 +475,25 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
 
         // Calculate bounding box at macro expansion time
         let (bbox_x, bbox_y, bbox_width, bbox_height) = calculate_bounding_box(&poly_points);
-
+        let bbox_tuple: BboxTuple = (bbox_x, bbox_y, bbox_width, bbox_height);
         // Calculate the scanline intersections at macro expansion time
         let min_scanline_y: i32 = bbox_y;
         let max_scanline_y: i32 = bbox_y + bbox_height as i32;
-        let scanlines: Vec<Vec<i32>> = find_all_scanline_intersections(&poly_points, min_scanline_y, max_scanline_y);
-        // eprintln!("scanlines: {:?}", scanlines);
-
+        let expected_scanlines = max_scanline_y - min_scanline_y;
+        let scanlines:  Vec<Vec<i32>> = scanline_intersections(&poly_points, bbox_tuple);
+        // let scanlines: Vec<Vec<i32>> = find_all_scanline_intersections(&poly_points, min_scanline_y, max_scanline_y);
+        let found_scanlines:i32 = scanlines.len().try_into().unwrap();
+        if expected_scanlines != found_scanlines {
+            panic!("Expected {} scanlines, found {}", expected_scanlines, found_scanlines);
+        }
         let scanlines_init = vec_to_scanline_intersections_expr(&scanlines);
-        // eprintln!("scanlines_init: {:?}", scanlines_init);
 
         let path_name_lit = Literal::string(&id.clone());
 
         // Generate static declarations for all components
         static_decls.push(quote! {
             // #id.clone()
-            #[doc = concat!("SVG path id:", #path_name_lit)]
+            #[doc = concat!("SVG path id: ", #path_name_lit)]
             static #points_ident: [Point; #points_len] = [#(#point_inits),*];
             static #polyline_ident: Polyline<'static> = Polyline::new(&#points_ident);
             static #bbox_ident: Rectangle =  Rectangle {
