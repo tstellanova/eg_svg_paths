@@ -7,6 +7,7 @@ use syn::{parse_macro_input, LitStr, Token};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::f32::consts::PI;
 use svgtypes::{PathParser, PathSegment};
 use closed_svg_path::{BezierSegment};
 
@@ -269,231 +270,103 @@ fn vec_to_scanline_intersections_expr(data: &Vec<Vec<i32>>) -> TokenStream2 {
     }
 }
 
-/// Convert an elliptical arc to cubic Bezier segments
-/// Returns a vector of Bezier segments that approximate the arc
-fn elliptical_arc_to_bezier_segments(
-    start: [f32; 2],
-    end: [f32; 2],
+
+
+
+/// Converts an ellipse to 4 cubic Bezier segments after applying SVG rotation
+/// rotation_tuple = (angle_rad, Option<[x, y]>)
+fn ellipse_to_bezier_segments(
+    cx: f32,
+    cy: f32,
     rx: f32,
     ry: f32,
-    x_axis_rotation: f32,
-    large_arc_flag: bool,
-    sweep_flag: bool,
+    rotation_tuple: (f32, Option<[f32; 2]>),
 ) -> Vec<[[f32; 2]; 4]> {
-    // Handle degenerate cases
-    if rx == 0.0 || ry == 0.0 {
-        // Degenerate to a line
-        let p0 = start;
-        let p3 = end;
-        let delta = [(p3[0] - p0[0]) / 3.0, (p3[1] - p0[1]) / 3.0];
-        let p1 = [p0[0] + delta[0], p0[1] + delta[1]];
-        let p2 = [p0[0] + 2.0 * delta[0], p0[1] + 2.0 * delta[1]];
-        return vec![[p0, p1, p2, p3]];
+    let (angle, center) = rotation_tuple;
+
+    // Precompute constants for cubic Bezier approximation
+    // https://spencermortensen.com/articles/bezier-circle/
+    let kappa = 4.0 * (PI / 8.0).tan() / 3.0; // 4/3 * tan(π/8) = ~0.5522847 
+
+    // Four Bezier segments, defined by points relative to ellipse center
+    let mut segments = vec![
+        // Each segment: [start, control1, control2, end]
+        [[-rx, 0.0], [-rx, kappa * ry], [-kappa * rx, ry], [0.0, ry]],
+        [[0.0, ry], [kappa * rx, ry], [rx, kappa * ry], [rx, 0.0]],
+        [[rx, 0.0], [rx, -kappa * ry], [kappa * rx, -ry], [0.0, -ry]],
+        [[0.0, -ry], [-kappa * rx, -ry], [-rx, -kappa * ry], [-rx, 0.0]],
+    ];
+
+    // Rotation matrix components
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+
+    // Determine rotation center
+    let (ox, oy) = if let Some(origin) = center {
+        (origin[0], origin[1])
+    }
+    else {
+        (0.,0.)
+    };
+
+    // Apply rotation and translation for each point
+    for segment in segments.iter_mut() {
+        for point in segment.iter_mut() {
+            // Translate point by ellipse (cx,cy) then relative to rotation center
+            let x_rel = (point[0] + cx) - ox;
+            let y_rel = (point[1] + cy) - oy;
+
+            // Rotate
+            let x_rot = x_rel * cos_a - y_rel * sin_a;
+            let y_rot = x_rel * sin_a + y_rel * cos_a;
+
+            // Translate back by rotation center
+            point[0] = x_rot + ox;
+            point[1] = y_rot + oy;
+        }
     }
 
-    if start[0] == end[0] && start[1] == end[1] {
-        // Start and end are the same, no arc to draw
-        return vec![];
-    }
-
-    let mut rx = rx.abs();
-    let mut ry = ry.abs();
-    let phi = x_axis_rotation.to_radians();
-    let cos_phi = phi.cos();
-    let sin_phi = phi.sin();
-
-    // Step 1: Compute (x1, y1)
-    let dx = (start[0] - end[0]) / 2.0;
-    let dy = (start[1] - end[1]) / 2.0;
-    let x1 = cos_phi * dx + sin_phi * dy;
-    let y1 = -sin_phi * dx + cos_phi * dy;
-
-    // Step 2: Ensure radii are large enough
-    let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry);
-    if lambda > 1.0 {
-        rx *= lambda.sqrt();
-        ry *= lambda.sqrt();
-    }
-
-    // Step 3: Compute (cx, cy)
-    let sign = if large_arc_flag == sweep_flag { -1.0 } else { 1.0 };
-    let sq = ((rx * rx) * (ry * ry) - (rx * rx) * (y1 * y1) - (ry * ry) * (x1 * x1))
-        / ((rx * rx) * (y1 * y1) + (ry * ry) * (x1 * x1));
-    let coeff = sign * sq.max(0.0).sqrt();
-    let cx1 = coeff * (rx * y1 / ry);
-    let cy1 = coeff * -(ry * x1 / rx);
-
-    // Step 4: Compute (cx, cy)
-    let sx2 = (start[0] + end[0]) / 2.0;
-    let sy2 = (start[1] + end[1]) / 2.0;
-    let cx = sx2 + (cos_phi * cx1 - sin_phi * cy1);
-    let cy = sy2 + (sin_phi * cx1 + cos_phi * cy1);
-
-    // Step 5: Compute angles
-    let ux = (x1 - cx1) / rx;
-    let uy = (y1 - cy1) / ry;
-    let vx = (-x1 - cx1) / rx;
-    let vy = (-y1 - cy1) / ry;
-
-    // Compute angle1
-    let n = (ux * ux + uy * uy).sqrt();
-    let p = ux;
-    let angle1 = if uy < 0.0 { -p.acos() } else { p.acos() } / n.max(1e-10);
-
-    // Compute dtheta
-    let n = ((ux * ux + uy * uy) * (vx * vx + vy * vy)).sqrt();
-    let p = ux * vx + uy * vy;
-    let mut dtheta = (p / n.max(1e-10)).acos();
-    if ux * vy - uy * vx < 0.0 {
-        dtheta = -dtheta;
-    }
-
-    if !sweep_flag && dtheta > 0.0 {
-        dtheta -= 2.0 * std::f32::consts::PI;
-    } else if sweep_flag && dtheta < 0.0 {
-        dtheta += 2.0 * std::f32::consts::PI;
-    }
-
-    // Convert arc to Bezier segments
-    arc_to_bezier_segments(cx, cy, rx, ry, phi, angle1, angle1 + dtheta)
-}
-
-/// Convert a circular/elliptical arc to cubic Bezier segments
-fn arc_to_bezier_segments(
-    cx: f32, cy: f32,    // center
-    rx: f32, ry: f32,    // radii
-    phi: f32,            // rotation angle
-    theta1: f32,         // start angle
-    theta2: f32,         // end angle
-) -> Vec<[[f32; 2]; 4]> {
-    let cos_phi = phi.cos();
-    let sin_phi = phi.sin();
-    
-    let mut segments = Vec::new();
-    let mut start_angle = theta1;
-    let total_angle = theta2 - theta1;
-    
-    // Split large arcs into smaller segments (max 90 degrees each)
-    let max_segment_angle = std::f32::consts::PI / 2.0;
-    let num_segments = (total_angle.abs() / max_segment_angle).ceil() as i32;
-    let segment_angle = total_angle / num_segments as f32;
-    
-    for _i in 0..num_segments {
-        let end_angle = start_angle + segment_angle;
-        
-        // Create Bezier segment for this arc portion
-        let segment = convert_small_arc_to_bezier_segment(
-            cx, cy, rx, ry, cos_phi, sin_phi, start_angle, end_angle
-        );
-        segments.push(segment);
-        
-        start_angle = end_angle;
-    }
-    
     segments
 }
 
-/// Convert  a small arc (≤ 90 degrees) to a single Bezier segment 
-fn convert_small_arc_to_bezier_segment(
-    cx: f32, cy: f32,           // center
-    rx: f32, ry: f32,           // radii
-    cos_phi: f32, sin_phi: f32, // rotation
-    theta1: f32, theta2: f32,   // start and end angles
-) -> [[f32; 2]; 4] {
-    let alpha = (theta2 - theta1).sin() * ((((theta2 - theta1) / 2.0).cos() - 1.0).abs().sqrt()) / 3.0;
-    
-    let cos_start = theta1.cos();
-    let sin_start = theta1.sin();
-    let cos_end = theta2.cos();
-    let sin_end = theta2.sin();
-    
-    // Points on the unit circle
-    let q1x = cos_start;
-    let q1y = sin_start;
-    let q2x = cos_end;
-    let q2y = sin_end;
-    
-    // Control points on unit circle
-    let q1_ctrl_x = q1x - alpha * sin_start;
-    let q1_ctrl_y = q1y + alpha * cos_start;
-    let q2_ctrl_x = q2x + alpha * sin_end;
-    let q2_ctrl_y = q2y - alpha * cos_end;
-    
-    // Transform to ellipse and apply rotation
-    let transform_point = |x: f32, y: f32| -> [f32; 2] {
-        let ex = rx * x;
-        let ey = ry * y;
-        [
-            cx + cos_phi * ex - sin_phi * ey,
-            cy + sin_phi * ex + cos_phi * ey,
-        ]
-    };
-    
-    let p0 = transform_point(q1x, q1y);
-    let p1 = transform_point(q1_ctrl_x, q1_ctrl_y);
-    let p2 = transform_point(q2_ctrl_x, q2_ctrl_y);
-    let p3 = transform_point(q2x, q2y);
-    
-    [p0, p1, p2, p3]
-}
-
-
-
-/// Convert an ellipse element to four Bezier segments
-fn ellipse_to_bezier_segments(cx: f32, cy: f32, rx: f32, ry: f32, rotation: f32) -> Vec<[[f32; 2]; 4]> {
-    // Magic number for cubic Bezier approximation of a circle
-    // This is the distance from circle center to control point for a 90-degree arc
-    const KAPPA: f32 = 0.5522847498; // 4/3 * tan(π/8)
-    
-    let cos_rot = rotation.cos();
-    let sin_rot = rotation.sin();
-    
-    // Control point distances
-    let cp_x = rx * KAPPA;
-    let cp_y = ry * KAPPA;
-    
-    // Define the four 90-degree segments of the ellipse in local coordinates
-    let segments_local = [
-        // Right to top (0° to 90°)
-        [[rx, 0.0], [rx, cp_y], [cp_x, ry], [0.0, ry]],
-        // Top to left (90° to 180°) 
-        [[0.0, ry], [-cp_x, ry], [-rx, cp_y], [-rx, 0.0]],
-        // Left to bottom (180° to 270°)
-        [[-rx, 0.0], [-rx, -cp_y], [-cp_x, -ry], [0.0, -ry]],
-        // Bottom to right (270° to 360°)
-        [[0.0, -ry], [cp_x, -ry], [rx, -cp_y], [rx, 0.0]],
-    ];
-
-    // Transform each segment: apply rotation and translation
-    segments_local
-        .iter()
-        .map(|segment| {
-            segment.map(|[x, y]| {
-                // Apply rotation first, then translation
-                let rotated_x = cos_rot * x - sin_rot * y;
-                let rotated_y = sin_rot * x + cos_rot * y;
-                [cx + rotated_x, cy + rotated_y]
-            })
-        })
-        .collect()
-}
-
 /// Parse rotation angle from SVG transform attribute (simplified parser)
-fn parse_rotation_from_transform(transform: &str) -> f32 {
-    // Simple regex-free parsing for rotate() transform
-    // Looks for pattern like "rotate(45)" or "rotate(45 100 100)"
-    if let Some(start) = transform.find("rotate(") {
-        let start_idx = start + 7; // length of "rotate("
-        if let Some(end_idx) = transform[start_idx..].find(')') {
-            let rotate_content = &transform[start_idx..start_idx + end_idx];
-            // Split by whitespace and take first value (the angle)
-            if let Some(angle_str) = rotate_content.split_whitespace().next() {
-                return angle_str.parse::<f32>().unwrap_or(0.0).to_radians();
-            }
-        }
+fn parse_rotation_from_transform(transform: &str) -> (f32, Option<[f32; 2]>) {
+    // Remove whitespace and ensure it's a rotate() string
+    let transform = transform.trim();
+    if !transform.starts_with("rotate(") || !transform.ends_with(')') {
+        return (0.0, None);
     }
-    0.0
+
+    // Extract the content inside the parentheses
+    let content = &transform[7..transform.len() - 1];
+    // Split by whitespace or commas
+    let parts: Vec<&str> = content
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if parts.is_empty() {
+        return (0.0, None);
+    }
+
+    // Parse the rotation angle (in degrees -> radians)
+    let angle_deg: f32 = parts[0].parse().unwrap_or(0.0);
+    let angle_rad = angle_deg.to_radians();
+
+    // Parse optional center point
+    let center = if parts.len() >= 3 {
+        let x: f32 = parts[1].parse().unwrap_or(0.0);
+        let y: f32 = parts[2].parse().unwrap_or(0.0);
+        Some([x, y])
+    } else {
+        None
+    };
+
+    (angle_rad, center)
 }
+
+
+
 
 #[proc_macro]
 pub fn import_svg_paths(input: TokenStream) -> TokenStream {
@@ -664,28 +537,8 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 last_command_was_quad_curve = true;
                                 last_command_was_cubic_curve = false;
                             }
-                            PathSegment::EllipticalArc { abs, rx, ry, x_axis_rotation, large_arc, sweep, x, y } => {
-                                let nx = x as f32;
-                                let ny = y as f32;
-                                let end_pos = if abs { [nx, ny] } else { [current_pos[0] + nx, current_pos[1] + ny] };
-                                assert!(nx < 0., "testing");
-                                let arc_segments = elliptical_arc_to_bezier_segments(
-                                    current_pos,
-                                    end_pos,
-                                    rx as f32,
-                                    ry as f32,
-                                    x_axis_rotation as f32,
-                                    large_arc,
-                                    sweep,
-                                );
-                                
-                                for segment in arc_segments {
-                                    bezier_segments.push(segment);
-                                }
-                                
-                                current_pos = end_pos;
-                                last_command_was_cubic_curve = false;
-                                last_command_was_quad_curve = false;
+                            PathSegment::EllipticalArc { .. } => {
+                                panic!("EllipticalArc path segments unsupported!");
                             }
                             PathSegment::ClosePath { .. } => {
                                 if current_pos != start_pos {
@@ -724,9 +577,9 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                 let rotation = if let Some(transform_attr) = node.attribute("transform") {
                     parse_rotation_from_transform(transform_attr)
                 } else {
-                    0.0
+                    (0.0, None)
                 };
-                eprintln!("ellipse rotation: {}", rotation);
+                eprintln!("ellipse rotation: {:?}", rotation);
 
                 if rx > 0.0 && ry > 0.0 {
                     let bezier_segments = ellipse_to_bezier_segments(cx, cy, rx, ry, rotation);
@@ -749,7 +602,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
         let scanlines_ident = format_ident!("SVG_FILE_{}_PATH_{}_SCANLS", file_id_suffix, index);
         let polygon_ident = format_ident!("SVG_FILE_{}_PATH_{}_POLYGON", file_id_suffix, index);
 
-        eprintln!("path id: '{}' ", id);
+        // eprintln!("path id: '{}' ", id);
 
         let points_len = poly_points.len();
         let point_inits: Vec<_> = poly_points.iter().map(|[x, y]| {
