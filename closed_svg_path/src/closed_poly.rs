@@ -18,7 +18,7 @@ use embedded_graphics::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClosedPolygon<'a> {
     /// The closed polygon vertices (first point matches last point)
-    pub vertices: &'a [Point],
+    // pub vertices: &'a [Point],
     /// The polyline defined by the closed polygon vertices
     pub polyline: Polyline<'a>,
     /// Cached polygon bounding box
@@ -42,7 +42,7 @@ impl<'a> ClosedPolygon<'a> {
         let bounding_box = polyline.bounding_box();
 
         Some(ClosedPolygon {
-            vertices,
+            // vertices,
             polyline,
             bounding_box,
             scanlines: None,
@@ -50,16 +50,16 @@ impl<'a> ClosedPolygon<'a> {
     }
 
     /// Get the vertices of the polygon
-    pub fn vertices(&self) -> &[Point] {
-        self.vertices
-    }
+    // pub fn vertices(&self) -> &[Point] {
+    //     self.vertices
+    // }
 
     pub fn total_size(&self) -> usize {
         // Base size of the struct itself (includes fat pointer + flag + padding)
         let mut total = size_of::<Self>();
 
         // add the statically allocated size of points
-        total += self.vertices.len() * size_of::<[i32;2]>();
+        // total += self.vertices.len() * size_of::<[i32;2]>();
 
         // Add the sizes of all scanlines
         if let Some(scanlines) = self.scanlines {

@@ -4,6 +4,7 @@
 pub mod closed_poly;
 pub use closed_poly::*;
 
+
 #[derive(Copy, Clone, Debug)]
 pub struct BezierSegment(pub [[f32; 2]; 4]);
 
