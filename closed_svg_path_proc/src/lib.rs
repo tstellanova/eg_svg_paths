@@ -437,6 +437,8 @@ fn convert_small_arc_to_bezier_segment(
     [p0, p1, p2, p3]
 }
 
+
+
 /// Convert an ellipse element to four Bezier segments
 fn ellipse_to_bezier_segments(cx: f32, cy: f32, rx: f32, ry: f32, rotation: f32) -> Vec<[[f32; 2]; 4]> {
     // Magic number for cubic Bezier approximation of a circle
@@ -450,8 +452,6 @@ fn ellipse_to_bezier_segments(cx: f32, cy: f32, rx: f32, ry: f32, rotation: f32)
     let cp_x = rx * KAPPA;
     let cp_y = ry * KAPPA;
     
-    // TODO this rotation seems to incorrectly tweak the bounding box
-    
     // Define the four 90-degree segments of the ellipse in local coordinates
     let segments_local = [
         // Right to top (0° to 90°)
@@ -463,16 +463,16 @@ fn ellipse_to_bezier_segments(cx: f32, cy: f32, rx: f32, ry: f32, rotation: f32)
         // Bottom to right (270° to 360°)
         [[0.0, -ry], [cp_x, -ry], [rx, -cp_y], [rx, 0.0]],
     ];
-    
+
     // Transform each segment: apply rotation and translation
     segments_local
         .iter()
         .map(|segment| {
             segment.map(|[x, y]| {
-                [
-                    cx + cos_rot * x - sin_rot * y,
-                    cy + sin_rot * x + cos_rot * y,
-                ]
+                // Apply rotation first, then translation
+                let rotated_x = cos_rot * x - sin_rot * y;
+                let rotated_y = sin_rot * x + cos_rot * y;
+                [cx + rotated_x, cy + rotated_y]
             })
         })
         .collect()
