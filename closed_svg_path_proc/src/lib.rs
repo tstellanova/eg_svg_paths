@@ -424,8 +424,8 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 if has_start {
                                     panic!("Multiple subpaths not supported");
                                 }
-                                start_pos = new_pos;
-                                current_pos = new_pos;
+                                current_pos = [new_pos[0].round(), new_pos[1].round()];
+                                start_pos = current_pos;
                                 has_start = true;
                                 last_command_was_cubic_curve = false;
                                 last_command_was_quad_curve = false;
@@ -438,6 +438,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let delta = [(p3[0] - p0[0]) / 3.0, (p3[1] - p0[1]) / 3.0];
                                 let p1 = [p0[0] + delta[0], p0[1] + delta[1]];
                                 let p2 = [p0[0] + 2.0 * delta[0], p0[1] + 2.0 * delta[1]];
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, p1, p2, p3]);
                                 current_pos = p3;
                                 last_command_was_cubic_curve = false;
@@ -450,6 +451,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let delta = [(p3[0] - p0[0]) / 3.0, (p3[1] - p0[1]) / 3.0];
                                 let p1 = [p0[0] + delta[0], p0[1] + delta[1]];
                                 let p2 = [p0[0] + 2.0 * delta[0], p0[1] + 2.0 * delta[1]];
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, p1, p2, p3]);
                                 current_pos = p3;
                                 last_command_was_cubic_curve = false;
@@ -462,6 +464,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let delta = [(p3[0] - p0[0]) / 3.0, (p3[1] - p0[1]) / 3.0];
                                 let p1 = [p0[0] + delta[0], p0[1] + delta[1]];
                                 let p2 = [p0[0] + 2.0 * delta[0], p0[1] + 2.0 * delta[1]];
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, p1, p2, p3]);
                                 current_pos = p3;
                                 last_command_was_cubic_curve = false;
@@ -478,6 +481,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let p2 = if abs { [nx2, ny2] } else { [current_pos[0] + nx2, current_pos[1] + ny2] };
                                 let p3 = if abs { [nx, ny] } else { [current_pos[0] + nx, current_pos[1] + ny] };
                                 let p0 = current_pos;
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, p1, p2, p3]);
                                 current_pos = p3;
                                 last_cubic_cp2 = p2;
@@ -497,6 +501,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 } else {
                                     p0
                                 };
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, p1, p2, p3]);
                                 current_pos = p3;
                                 last_cubic_cp2 = p2;
@@ -513,6 +518,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let p0 = current_pos;
                                 let cp1 = [p0[0] + (2.0 / 3.0) * (qp1[0] - p0[0]), p0[1] + (2.0 / 3.0) * (qp1[1] - p0[1])];
                                 let cp2 = [p3[0] + (2.0 / 3.0) * (qp1[0] - p3[0]), p3[1] + (2.0 / 3.0) * (qp1[1] - p3[1])];
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, cp1, cp2, p3]);
                                 current_pos = p3;
                                 last_quad_cp = qp1;
@@ -531,6 +537,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 };
                                 let cp1 = [p0[0] + (2.0 / 3.0) * (qp1[0] - p0[0]), p0[1] + (2.0 / 3.0) * (qp1[1] - p0[1])];
                                 let cp2 = [p3[0] + (2.0 / 3.0) * (qp1[0] - p3[0]), p3[1] + (2.0 / 3.0) * (qp1[1] - p3[1])];
+                                let p3: [f32; 2] = [p3[0].round(), p3[1].round()];
                                 bezier_segments.push([p0, cp1, cp2, p3]);
                                 current_pos = p3;
                                 last_quad_cp = qp1;
@@ -541,8 +548,10 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 panic!("EllipticalArc path segments unsupported!");
                             }
                             PathSegment::ClosePath { .. } => {
-                                if current_pos != start_pos {
-                                    panic!("Path '{}' not closed properly", id.to_string());
+                                let (final_x, final_y) = (current_pos[0], current_pos[1]);
+                                let (first_x , first_y) = (start_pos[0], start_pos[1]);
+                                if (final_x, final_y) != (first_x , first_y) {
+                                    panic!("Path '{}' not closed properly cur: {:?} start: {:?}", id.to_string(), (final_x, final_y), (first_x , first_y));
                                 }
                                 last_command_was_cubic_curve = false;
                                 last_command_was_quad_curve = false;

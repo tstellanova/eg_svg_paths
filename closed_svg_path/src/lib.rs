@@ -1,8 +1,27 @@
 #![no_std]
 
+use num_enum::TryFromPrimitive;
 
 pub mod closed_poly;
 pub use closed_poly::*;
+
+
+/// A 3x3 grid describing the direction the eyes are looking, 
+/// from the observer's perspective.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u8)]
+pub enum GazeDirection {
+    NorthWest = 0,
+    North = 1,
+    NorthEast = 2,
+    West = 3,
+    StraightAhead = 4,// straight in front  
+    East = 5,
+    SouthWest = 6,
+    South = 7,
+    SouthEast = 8,   
+    MaxCount
+}
 
 
 #[derive(Copy, Clone, Debug)]
