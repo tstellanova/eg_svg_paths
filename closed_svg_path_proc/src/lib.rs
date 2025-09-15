@@ -407,7 +407,7 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                     let mut bezier_segments: Vec<[[f32; 2]; 4]> = Vec::new();
                     let mut current_pos = [0.0f32, 0.0];
                     let mut start_pos = [0.0f32, 0.0];
-                    let mut has_start = false;
+                    let mut saw_seg_start = false;
                     let mut last_cubic_cp2 = [0.0f32, 0.0];
                     let mut last_quad_cp = [0.0f32, 0.0];
                     let mut last_command_was_cubic_curve = false;
@@ -415,18 +415,18 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
 
                     let mut poly_points: Vec<[i32; 2]> = Vec::new();
 
-                    for seg in path_segments {
+                    for seg_idx in 0..path_segments.len() {
+                        let seg = path_segments[seg_idx];
                         match seg {
                             PathSegment::MoveTo { abs, x, y } => {
                                 let nx = x as f32;
                                 let ny = y as f32;
                                 let new_pos = if abs { [nx, ny] } else { [current_pos[0] + nx, current_pos[1] + ny] };
-                                if has_start {
-                                    panic!("Multiple subpaths not supported");
-                                }
+                                assert!(!saw_seg_start,"Multiple subpaths not supported");
+
                                 current_pos = [new_pos[0].round(), new_pos[1].round()];
                                 start_pos = current_pos;
-                                has_start = true;
+                                saw_seg_start = true;
                                 last_command_was_cubic_curve = false;
                                 last_command_was_quad_curve = false;
                             }
@@ -551,7 +551,8 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                                 let (final_x, final_y) = (current_pos[0], current_pos[1]);
                                 let (first_x , first_y) = (start_pos[0], start_pos[1]);
                                 if (final_x, final_y) != (first_x , first_y) {
-                                    panic!("Path '{}' not closed properly cur: {:?} start: {:?}", id.to_string(), (final_x, final_y), (first_x , first_y));
+                                    eprintln!("Path '{}' not closed properly cur: {:?} start: {:?}", id.to_string(), (final_x, final_y), (first_x , first_y));
+                                    
                                 }
                                 last_command_was_cubic_curve = false;
                                 last_command_was_quad_curve = false;
@@ -560,7 +561,16 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
                     }
 
                     bez_segs_to_closed_poly_points(&bezier_segments, &mut poly_points);
-
+                    // ensure that polygons are closed
+                    let first_pt = poly_points.first().unwrap().clone();
+                    let last_pt = poly_points.last().unwrap().clone();
+                    let last_idx = poly_points.len() - 1;
+                    if last_pt != first_pt {
+                        eprintln!("polygon not closed properly: ({},{}) != ({},{})", 
+                            first_pt[0],first_pt[1],last_pt[0],last_pt[1]);
+                        poly_points.remove(last_idx);
+                        poly_points.push(first_pt);
+                    }
                     paths.push((id.to_string(), poly_points));
                 }
             }
