@@ -395,12 +395,11 @@ pub fn import_svg_paths(input: TokenStream) -> TokenStream {
     };
 
     let doc = roxmltree::Document::parse(&svg_content).expect("Invalid SVG XML");
-
     let mut paths = Vec::new();
     for node in doc.descendants() {
         if node.tag_name().name() == "path" {
             if let Some(id) = node.attribute("id") {
-                eprintln!("process {} id {} ...",node.tag_name().name(), id );
+                //eprintln!("process {} id {} ...",node.tag_name().name(), id );
                 if let Some(d) = node.attribute("d") {
                     let path_segments: Vec<PathSegment> = PathParser::from(d).collect::<Result<_, _>>().expect("Invalid path data");
 
